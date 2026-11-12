@@ -96,6 +96,8 @@ fun TextInputDialog(
     initialText: String = "",
     suggestionLabel: String = "",
     suggestedMinutes: Int? = null,
+    /** True for movie-bridge habits: the Length wheel is ALWAYS available. */
+    isMovieHabit: Boolean = false,
     /** Suggested watch time-of-day (movie bridge); null = keep the defaults. */
     suggestedEntryTime: java.time.LocalTime? = null,
     recentMovies: List<BridgeMovie> = emptyList(),
@@ -165,7 +167,7 @@ fun TextInputDialog(
     // Becomes available also once a recent movie is picked, so a partially
     // watched film can be logged with custom minutes even without a live
     // suggestion.
-    var lengthAvailable by remember { mutableStateOf(suggestedMinutes != null) }
+    var lengthAvailable by remember { mutableStateOf(suggestedMinutes != null || isMovieHabit) }
     val hasLengthSuggestion = lengthAvailable
     var lengthMinutes by remember { mutableIntStateOf(suggestedMinutes ?: 0) }
     var showLengthPicker by remember { mutableStateOf(false) }
@@ -857,9 +859,13 @@ fun TextInputDialog(
                                 if (parts.isEmpty()) {
                                     val alreadyHasDuration = Regex("""\(\d+\s*min\)\s*$""")
                                         .containsMatchIn(trimmedInput)
+                                    // A movie habit's Length wheel is always
+                                    // available (isMovieHabit) — annotate
+                                    // whenever a positive length is set.
                                     val textWithLength = when {
-                                        !hasLengthSuggestion || alreadyHasDuration -> trimmedInput
-                                        lengthMinutes > 0 -> "$trimmedInput ($lengthMinutes min)"
+                                        alreadyHasDuration -> trimmedInput
+                                        lengthMinutes > 0 && (hasLengthSuggestion || isMovieHabit) ->
+                                            "$trimmedInput ($lengthMinutes min)"
                                         else -> trimmedInput
                                     }
                                     parts.add(textWithLength)

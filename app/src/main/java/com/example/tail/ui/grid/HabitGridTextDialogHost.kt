@@ -47,8 +47,10 @@ internal data class TextInputDialogState(
     val suggestedText: String = "",
     /** Label shown above the text field when suggestedText is non-empty. */
     val suggestionLabel: String = "",
-    /** Suggested watch-length in minutes (movie bridge); null = no length section. */
+    /** Suggested watch-length in minutes (movie bridge); null = unknown yet. */
     val suggestedMinutes: Int? = null,
+    /** True for movie-bridge-linked habits: the Length wheel is always shown. */
+    val isMovieHabit: Boolean = false,
     /** Suggested watch time-of-day (movie bridge); null = dialog default time. */
     val suggestedEntryTime: java.time.LocalTime? = null,
     /** True while the movie suggestion is still resolving (cache → bridge). */
@@ -91,6 +93,7 @@ internal fun openTextInputDialog(
                 suggestedText = suggestedText,
                 suggestionLabel = suggestionLabel,
                 suggestedMinutes = suggestedMinutes,
+                isMovieHabit = isMovieLinked,
                 suggestedEntryTime = suggestedEntryTime,
                 suggestionLoading = suggestionLoading,
                 recentMovies = recentMovies
@@ -483,6 +486,7 @@ internal fun TextInputDialogHost(
         initialText = state.suggestedText,
         suggestionLabel = state.suggestionLabel,
         suggestedMinutes = state.suggestedMinutes,
+        isMovieHabit = state.isMovieHabit,
         // Movie suggestion: pre-fill the time wheel with the movie's watch
         // time (falls back to the defaults above when null / not a movie).
         suggestedEntryTime = state.suggestedEntryTime,

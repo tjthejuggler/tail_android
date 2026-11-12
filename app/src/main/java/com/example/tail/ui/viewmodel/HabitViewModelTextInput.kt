@@ -487,8 +487,21 @@ fun HabitViewModel.saveTextEntry(
             val entryDate = date ?: java.time.LocalDate.now()
             val entryClock = time ?: java.time.LocalTime.now()
             val stampTime = entryClock.format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+            // Movie-bridge habits: a manually added entry can lack the
+            // "(N min)" annotation (no suggestion yet, wheel left at its 0
+            // seed, or a typed title). Resolve the watched minutes from the
+            // movie cache and annotate the entry so the minutes slot fills,
+            // the day's minutes total increments and feed-minutes links fire.
+            var entryText = text
+            if (isMovieBridgeHabit(habitName) &&
+                !Regex("""\(\d+\s*min\)\s*$""").containsMatchIn(entryText)
+            ) {
+                val resolved = com.example.tail.notify.HabitAsks
+                    .resolveMovieMinutes(context, entryText, 0)
+                if (resolved > 0) entryText = "$entryText ($resolved min)"
+            }
             // Save the text entry for the current date
-            textInputRepo.appendTextEntry(uri, context, text, entryDate, entryClock, habitName = habitName)
+            textInputRepo.appendTextEntry(uri, context, entryText, entryDate, entryClock, habitName = habitName)
 
             // If this is a roll forward habit, also roll forward the text
             if (habitName in _settings.value.rollForwardHabits) {
@@ -525,7 +538,7 @@ fun HabitViewModel.saveTextEntry(
             // forwarded to conditional-linked habits that have the per-link
             // "feed minutes" flag enabled.
             val entryMinutes = Regex("""\((\d+)\s*min\)\s*$""")
-                .find(text)?.groupValues?.get(1)?.toIntOrNull()
+                .find(entryText)?.groupValues?.get(1)?.toIntOrNull()
             incrementHabit(
                 habitName, 1,
                 recordTimestamp = !isMovieBridgeHabit(habitName),
@@ -547,7 +560,7 @@ fun HabitViewModel.saveTextEntry(
             }
 
             // Trigger async IMDb rating fetch for movie-bridge habits
-            triggerImdbFetchForEntry(habitName, text)
+            triggerImdbFetchForEntry(habitName, entryText)
         } catch (e: Exception) {
             _errorMessage.value = "Failed to save text entry: ${e.message}"
         }

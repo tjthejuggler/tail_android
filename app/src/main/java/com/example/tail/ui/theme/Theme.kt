@@ -9,13 +9,25 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+
+/**
+ * The app's canvas must always be pure true black (#000000) in dark mode.
+ *
+ * Dynamic (Material You) palettes are wallpaper-extracted by the OS, and One
+ * UI updates have drifted the dynamic DARK scheme's neutrals from black to
+ * gray (2026-11 update) — the phone's own theme is trusted for accents only.
+ * These neutral slots are therefore pinned after palette resolution, so
+ * backgrounds stay true black no matter what the system hands us.
+ */
+private val TrueBlack = Color(0xFF000000)
 
 private val DarkColorScheme = darkColorScheme(
     primary = Purple80,
     secondary = PurpleGrey80,
     tertiary = Pink80
-)
+).copy(background = TrueBlack, surface = TrueBlack)
 
 private val LightColorScheme = lightColorScheme(
     primary = Purple40,
@@ -43,7 +55,9 @@ fun TailTheme(
     val colorScheme = when {
         dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
             val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            val scheme =
+                if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+            if (darkTheme) scheme.copy(background = TrueBlack, surface = TrueBlack) else scheme
         }
 
         darkTheme -> DarkColorScheme
