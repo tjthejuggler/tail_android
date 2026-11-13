@@ -104,8 +104,10 @@ fun HabitViewModel.loadSleepConditionsHistory(
  * dialog session are APPENDED to the times already stored for the date
  * (deduped), supporting naps and post-midnight bedtimes. Temperature and
  * conditions overwrite only when provided. Increments the habit count by 1 —
- * but only when the bed half was previously unset for that date, so
- * re-editing tonight's bedtime never inflates streaks.
+ * but only when the day's count is still zero AND the bed half was previously
+ * unset, so re-editing tonight's bedtime never inflates streaks while a LOST
+ * first increment (failed persist / synced-file overwrite) stays recoverable
+ * by re-saving the form.
  *
  * @param stampTime "HH:mm:ss" matching the first bed time, so the recorded
  *                  timestamp aligns with the timeline graph.
@@ -122,7 +124,13 @@ fun HabitViewModel.saveSleepTimeEntry(
         try {
             val dateStr = dateString(date)
             val existing = sleepDataRepo.getRecord(habitName, dateStr)
-            val firstEntry = existing.bedTimes().isEmpty()
+            // Count-based increment guard (2026-11-13 wake bug): increment
+            // only when the day's habit COUNT is still zero. The old check
+            // keyed on the stored record's emptiness, so when the first
+            // increment was lost (persist failure / synced-file overwrite)
+            // every later form save silently skipped the increment — the
+            // form "wasn't accepted" no matter how often it was re-filled.
+            val firstEntry = (cachedPhoneDb[habitName]?.get(dateStr) ?: 0) <= 0
             val merged = (existing.bedTimes() + bedTimes).distinct()
             sleepDataRepo.mergeRecord(
                 habitName, dateStr,
@@ -148,8 +156,9 @@ fun HabitViewModel.saveSleepTimeEntry(
  * dialog session are APPENDED to the times already stored for the date
  * (deduped, one per sleep segment), plus the mini-survey answers
  * (awakenings count, minutes awake, perceived quality 1–10). Increments the
- * habit count by 1 — only when the wake half was previously unset for that
- * date (re-edits don't re-count).
+ * habit count by 1 — only when the day's count is still zero AND the wake
+ * half was previously unset (re-edits don't re-count, but a lost first
+ * increment is recoverable by re-saving the form).
  */
 fun HabitViewModel.saveWakeSurveyEntry(
     habitName: String,
@@ -164,7 +173,10 @@ fun HabitViewModel.saveWakeSurveyEntry(
         try {
             val dateStr = dateString(date)
             val existing = sleepDataRepo.getRecord(habitName, dateStr)
-            val firstEntry = existing.wakeTimes().isEmpty()
+            // Count-based increment guard — see saveSleepTimeEntry. Re-saving
+            // the wake form after a lost increment (or an externally zeroed
+            // count) now re-attempts the increment instead of no-op'ing.
+            val firstEntry = (cachedPhoneDb[habitName]?.get(dateStr) ?: 0) <= 0
             val merged = (existing.wakeTimes() + wakeTimes).distinct()
             sleepDataRepo.mergeRecord(
                 habitName, dateStr,

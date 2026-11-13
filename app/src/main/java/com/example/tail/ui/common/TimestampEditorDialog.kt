@@ -95,6 +95,13 @@ fun TimestampEditorDialog(
     isMovieHabit: Boolean = false,
     /** True when the habit has a text log (text field shown in card edit mode). */
     canEditText: Boolean = false,
+    /** True for sleep-suite habits (sleep-time / wake-time variants) — the
+     *  pencil opens the per-day sleep FORM (time wheels + survey) instead of
+     *  the generic amount/text inputs, which make no sense for this type. */
+    isSleepHabit: Boolean = false,
+    /** Open the sleep-suite form for the viewed day (sleep-time or wake-time
+     *  variant dialog, per the habit's configured variant). */
+    onEditSleepForm: () -> Unit = {},
     /** True when minutes is the habit's PRIMARY value — the per-timestamp
      *  number then shows/edits the minutes contributed at that time. */
     isMinutesPrimary: Boolean = false,
@@ -276,6 +283,7 @@ fun TimestampEditorDialog(
                                     subtypeLabel = subtypeLabelsByTime[group.time].orEmpty(),
                                     isEditing = editingCard == group.time,
                                     isMealHabit = isMealHabit,
+                                    isSleepHabit = isSleepHabit,
                                     isMovieHabit = isMovieHabit,
                                     canEditText = canEditText,
                                     isMinutesPrimary = isMinutesPrimary,
@@ -295,7 +303,13 @@ fun TimestampEditorDialog(
                                     },
                                     onStartMoveDay = { movingTime = group.time },
                                     onStartEditInfo = {
-                                        if (isMealHabit) {
+                                        if (isSleepHabit) {
+                                            // Sleep-suite habits: the pencil opens the
+                                            // per-day sleep form (bed/wake wheels +
+                                            // survey) for the viewed day — the generic
+                                            // amount stepper / text inputs don't apply.
+                                            onEditSleepForm()
+                                        } else if (isMealHabit) {
                                             onEditMeal(group.time)
                                         } else if (isWeightsHabit && subtypeLabelsByTime.containsKey(group.time)) {
                                             // Weights habits: edit the SET logged at this
@@ -478,6 +492,7 @@ private fun TimestampCard(
     subtypeLabel: String,
     isEditing: Boolean,
     isMealHabit: Boolean,
+    isSleepHabit: Boolean,
     isMovieHabit: Boolean,
     canEditText: Boolean,
     isMinutesPrimary: Boolean,
@@ -766,6 +781,15 @@ private fun TimestampCard(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = "✏️ opens the meal editor for this time",
+                fontSize = 10.sp,
+                color = Color(0xFF667788)
+            )
+        }
+        // Sleep-suite hint under the header when not editing.
+        if (!isEditing && isSleepHabit) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "✏️ opens the sleep form for this day",
                 fontSize = 10.sp,
                 color = Color(0xFF667788)
             )

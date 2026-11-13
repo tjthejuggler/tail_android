@@ -2621,6 +2621,17 @@ fun HabitGridScreen(
             isMealHabit = habitName in settings.mealHabits,
             isMovieHabit = habitName in settings.bridgeMovieHabits,
             canEditText = habitName in settings.textInputHabits,
+            isSleepHabit = habitName in settings.sleepHabits,
+            onEditSleepForm = {
+                // Sleep-suite habits: the pencil opens the per-day sleep form
+                // (bed/wake wheels + survey) instead of the generic amount /
+                // text inputs, which don't apply to this habit type.
+                viewModel.habits.value.firstOrNull { it.name == habitName }
+                    ?.let { sleepHabit ->
+                        timestampEditorHabitName = null
+                        openSleepDialog(sleepDialogState, viewModel, sleepHabit, selectedDate)
+                    }
+            },
             isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habitName),
             minutesByTime = timestampEditorMinutes,
             subtypeLabelsByTime = timestampEditorSubtypes +
