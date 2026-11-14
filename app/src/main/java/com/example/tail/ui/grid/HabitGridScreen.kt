@@ -1668,6 +1668,13 @@ fun HabitGridScreen(
                     loadMovieEntries = { habitName ->
                         viewModel.loadMovieEntriesForDay(habitName, selectedDate)
                     },
+                    // Media habits (podcasts, music): their blocks come from
+                    // the play-by-play text log, so listening shows on the
+                    // timeline for all history with logged plays.
+                    mediaHabits = settings.mediaHabits,
+                    loadMediaEntries = { habitName ->
+                        viewModel.loadMediaEntriesForDay(habitName, selectedDate)
+                    },
                     // Garmin-linked habits: activity blocks are sized (and,
                     // when the watch start time is known, placed) from the
                     // cached daily activity minutes.

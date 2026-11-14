@@ -270,6 +270,19 @@ fun ScheduleTimelineScreen(
      */
     loadMovieEntries: suspend (habitName: String) -> Map<String, HabitViewModel.MovieScheduleEntry> =
         { emptyMap() },
+    /**
+     * Media habits (podcasts, music): loads the day's plays from the text
+     * log (the play-by-play entries MediaPlaybackTracker writes) — play
+     * time-of-day ("HH:mm:ss") → [HabitViewModel.MediaScheduleEntry]
+     * carrying the item's "(N min)" length (0 when unknown) and the
+     * "Title — Artist/Show" label. The text log is the source of truth for
+     * media habits, so past listening appears on the timeline for ALL
+     * history — even without increment timestamps.
+     */
+    loadMediaEntries: suspend (habitName: String) -> Map<String, HabitViewModel.MediaScheduleEntry> =
+        { emptyMap() },
+    /** Habits with the "Media" type enabled (automatic listening tracking). */
+    mediaHabits: Set<String> = emptySet(),
     /** Habits linked to Garmin metrics (activity blocks are sized to the activity). */
     garminHabits: Set<String> = emptySet(),
     /**
@@ -342,6 +355,43 @@ fun ScheduleTimelineScreen(
                             entries.keys.none { it.take(5) == event.time.take(5) }
                     }
                 }
+                for ((time, entry) in entries) {
+                    val idx = merged.indexOfFirst {
+                        it.habitName == habit && it.time.take(5) == time.take(5)
+                    }
+                    if (idx >= 0) {
+                        if (entry.minutes > merged[idx].durationMinutes) {
+                            merged[idx] = merged[idx].copy(durationMinutes = entry.minutes)
+                        }
+                        if (merged[idx].movieTitle == null && entry.title.isNotBlank()) {
+                            merged[idx] = merged[idx].copy(movieTitle = entry.title)
+                        }
+                    } else {
+                        merged += ScheduleEvent(
+                            habitName = habit,
+                            time = time,
+                            amount = 1,
+                            isMeal = habit in mealHabits,
+                            canEditText = habit in textInputHabits,
+                            durationMinutes = entry.minutes,
+                            movieTitle = entry.title.takeIf { it.isNotBlank() }
+                        )
+                    }
+                }
+            }
+            mergedEvents = merged
+        }
+        // Media habits (podcasts, music): entries come from the TEXT LOG —
+        // each play-by-play line carries its play time and "(N min)" item
+        // length — so listening appears on the timeline for all history.
+        // Mirrors the movie merge: existing increment events for the habit
+        // keep their time but pick up the logged length and item label.
+        if (mediaHabits.isNotEmpty()) {
+            val merged = mergedEvents.toMutableList()
+            for (habit in mediaHabits) {
+                if (habit !in known || habit in timelineExcludedHabits) continue
+                val entries = loadMediaEntries(habit)
+                if (entries.isEmpty()) continue
                 for ((time, entry) in entries) {
                     val idx = merged.indexOfFirst {
                         it.habitName == habit && it.time.take(5) == time.take(5)

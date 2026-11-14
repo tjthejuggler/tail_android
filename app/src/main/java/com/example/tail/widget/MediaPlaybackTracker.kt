@@ -291,6 +291,8 @@ object MediaPlaybackTracker {
 
         // Playback stopped — record the finished listening block.
         val lastSeen = p.getLong(lastSeenKey, start)
+        val lastItemKey = KEY_LAST_EPISODE_PREFIX + habit
+        val lastPosKey = KEY_LAST_POS_PREFIX + habit
         p.edit().remove(startKey).remove(lastSeenKey).apply()
 
         val elapsedMillis = (lastSeen - start).coerceAtLeast(0L)
@@ -299,6 +301,11 @@ object MediaPlaybackTracker {
             Log.d(TAG, "Listening block for '$habit' under a minute — nothing recorded")
             return
         }
+        // The play-dedup state is per-LISTENING-BLOCK: once a real block is
+        // recorded, forget the last item/position so a LATER play of the SAME
+        // episode/track (e.g. resuming a podcast hours later) is logged
+        // again with its own time instead of being silently suppressed.
+        p.edit().remove(lastItemKey).remove(lastPosKey).apply()
         recordMinutes(context, habit, minutes)
     }
 

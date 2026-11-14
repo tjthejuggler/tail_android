@@ -2275,6 +2275,44 @@ class HabitViewModel(
     )
 
     /**
+     * One played media item (podcast episode / music track) on the schedule
+     * timeline: its "(N min)" item length (0 when the app exposed no
+     * duration) and the "Title — Artist/Show" display label.
+     */
+    data class MediaScheduleEntry(
+        val minutes: Int,
+        val title: String
+    )
+
+    /**
+     * Loads a media habit's plays for [date] from its text log (the
+     * play-by-play entries MediaPlaybackTracker writes): play time-of-day
+     * ("HH:mm:ss") → [MediaScheduleEntry]. Non-media lines (manual notes)
+     * are skipped. The text log is the source of truth, so past listening
+     * appears on the schedule timeline for ALL history.
+     */
+    suspend fun loadMediaEntriesForDay(
+        habitName: String,
+        date: LocalDate
+    ): Map<String, MediaScheduleEntry> {
+        val uri = TextInputRepository.textUriOrNull(_settings.value.textInputFileUris[habitName])
+        val datePrefix = dateString(date)
+        return textInputRepo.loadTextLog(uri, context, habitName)
+            .filterKeys { it.startsWith(datePrefix) && it.length >= 16 }
+            .mapKeys { (timestamp, _) -> timestamp.substring(11) }
+            .mapNotNull { (time, text) ->
+                val m = MEDIA_LOG_ENTRY_REGEX.find(text.trim()) ?: return@mapNotNull null
+                val (title, artist) = m.destructured
+                val label = if (artist.isNullOrBlank()) title else "$title — $artist"
+                time to MediaScheduleEntry(
+                    minutes = m.groupValues[3].toIntOrNull() ?: 0,
+                    title = label
+                )
+            }
+            .toMap()
+    }
+
+    /**
      * Loads a movie-bridge habit's entries for [date] from its text log:
      * watch time-of-day ("HH:mm:ss") → [MovieScheduleEntry] with the watched
      * minutes parsed from the "(N min)" annotations and the movie's display
