@@ -155,7 +155,11 @@ internal fun ConditionalSubtypeFeedDialog(
     onSkip: () -> Unit
 ) {
     AlertDialog(
-        onDismissRequest = onSkip,
+        // Dismissal (back/outside tap) must NOT drop the feed: it stays
+        // queued and this dialog simply re-shows. Only the explicit
+        // "Skip" button discards it. (Fix for intermittent lost
+        // conditional feeds into subtyped habits.)
+        onDismissRequest = {},
         title = { Text(text = habitName, fontSize = 16.sp) },
         text = {
             Column {

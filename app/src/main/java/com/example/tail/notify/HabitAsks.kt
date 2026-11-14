@@ -483,6 +483,17 @@ object HabitAsks {
      */
     fun movieSuggestionEntryTime(movie: BridgeMovie, forDate: LocalDate): LocalTime? {
         if (movieWatchDay(movie) != forDate) return null
+        return movieWatchTimeOfDay(movie)
+    }
+
+    /**
+     * The movie's last watch-session start as a time-of-day, regardless of
+     * which day it falls on. Used when a movie is picked from the
+     * recently-watched list in the manual increment dialog: the wheel is
+     * pre-filled with when it was actually watched, even when the user is
+     * logging it onto a different day than the bridge recorded.
+     */
+    fun movieWatchTimeOfDay(movie: BridgeMovie): LocalTime? {
         movie.sessions.maxByOrNull { it.startUnix }?.startUnix?.takeIf { it > 0 }?.let { unix ->
             return java.time.Instant.ofEpochSecond(unix)
                 .atZone(java.time.ZoneId.systemDefault())

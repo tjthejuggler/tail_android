@@ -270,10 +270,19 @@ fun TextInputDialog(
                                         .clickable {
                                             userEditedText = true
                                             inputText = movie.title
-                                            // Picking a recent movie makes the
-                                            // Length row available (seeded from
-                                            // the file length when known) so
-                                            // the minutes can be overridden.
+                                            // Picking a recent movie pre-fills
+                                            // BOTH wheels from the bridge data:
+                                            // the time wheel with the movie's
+                                            // last watch-session start time, and
+                                            // the Length row with the file's
+                                            // watch length (when known) so the
+                                            // minutes can still be overridden.
+                                            com.example.tail.notify.HabitAsks
+                                                .movieWatchTimeOfDay(movie)?.let { t ->
+                                                    timeTouched = true
+                                                    selectedHour = t.hour
+                                                    selectedMinute = t.minute
+                                                }
                                             lengthAvailable = true
                                             movie.totalWatchMin?.takeIf { it > 0 }?.let {
                                                 lengthTouched = true

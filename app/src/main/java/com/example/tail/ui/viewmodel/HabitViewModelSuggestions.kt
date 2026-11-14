@@ -95,11 +95,14 @@ fun isSpecialFlowHabit(name: String, s: AppSettings): Boolean =
  * custom-input amount (most recent used), subtype (default = first), text
  * (most frequent past option), and an [HabitSuggestion.reason] label.
  */
-fun HabitViewModel.buildHabitSuggestions(onReady: (List<HabitSuggestion>) -> Unit) {
+fun HabitViewModel.buildHabitSuggestions(
+    screenIndex: Int? = null,
+    onReady: (List<HabitSuggestion>) -> Unit
+) {
     viewModelScope.launch(Dispatchers.Default) {
         val settings = _settings.value
         val habitList = _habits.value
-        val result = runCatching { computeSuggestions(settings, habitList) }
+        val result = runCatching { computeSuggestions(settings, habitList, screenIndex) }
             .getOrDefault(emptyList())
         withContext(Dispatchers.Main) { onReady(result) }
     }
@@ -107,14 +110,22 @@ fun HabitViewModel.buildHabitSuggestions(onReady: (List<HabitSuggestion>) -> Uni
 
 private suspend fun HabitViewModel.computeSuggestions(
     settings: AppSettings,
-    habitList: List<Habit>
+    habitList: List<Habit>,
+    screenIndex: Int? = null
 ): List<HabitSuggestion> {
     if (!settings.suggestionFlashEnabled) return emptyList()
 
     // Candidate names: everything on any screen (or the visible list when
     // no screens are configured), minus app links / special flows /
-    // automatic habits / disabled habits.
-    val candidates: List<Habit> = if (settings.habitScreens.isNotEmpty()) {
+    // automatic habits / disabled habits. With [screenIndex] set, only the
+    // habits on that one screen are candidates (per-screen flash shown when
+    // switching habit grid screens).
+    val candidates: List<Habit> = if (
+        screenIndex != null && screenIndex in settings.habitScreens.indices
+    ) {
+        val names = settings.habitScreens[screenIndex].habitNames.toSet()
+        habitList.filter { it.name in names }
+    } else if (settings.habitScreens.isNotEmpty()) {
         val names = settings.habitScreens.flatMap { it.habitNames }.toSet()
         habitList.filter { it.name in names }
     } else habitList

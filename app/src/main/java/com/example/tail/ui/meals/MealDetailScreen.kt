@@ -183,9 +183,17 @@ fun MealDetailDialog(
         onError = { voiceError = it }
     )
     // Timestamp the next AI/voice meal will be logged at. Defaults to "now"
-    // but can be dialled back via the time chip in the AI input card so a
-    // meal eaten earlier can still be recorded with its real time.
-    var entryTimeMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    // on the grid's SELECTED date (so logging while viewing a past day adds
+    // the meal to that day, not today) and can be dialled back via the time
+    // chip in the AI input card so a meal eaten earlier can still be
+    // recorded with its real time.
+    var entryTimeMillis by remember(selectedDate) {
+        mutableStateOf(
+            if (selectedDate == LocalDate.now()) System.currentTimeMillis()
+            else selectedDate.atTime(java.time.LocalTime.now())
+                .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        )
+    }
 
     val submitAiParse: () -> Unit = {
         if (voiceText.isNotBlank() && !aiParsing) {
@@ -319,7 +327,9 @@ fun MealDetailDialog(
             if (showQuickLog) {
                 ManualEntrySection(
                     onAdd = { title, calories ->
-                        viewModel.addManualMealLog(habitName, title, calories)
+                        viewModel.addManualMealLog(
+                            habitName, title, calories, loggedAt = entryTimeMillis
+                        )
                     }
                 )
             }

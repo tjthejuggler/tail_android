@@ -319,10 +319,13 @@ fun HabitViewModel.addManualMealLog(
     habitName: String,
     title: String,
     calories: Int,
-    skipIncrement: Boolean = false
+    skipIncrement: Boolean = false,
+    /** Timestamp the meal is logged at — defaults to now, but callers can
+     *  backdate it (e.g. the grid's selected date when logging a past day). */
+    loggedAt: Long = System.currentTimeMillis()
 ) {
     viewModelScope.launch(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
+        val now = loggedAt
         val active = mealLogRepo.findActiveGroup(habitName, now)
         if (active != null && active.needsDetails()) {
             // Same meal-group still open without specifics — fill its card

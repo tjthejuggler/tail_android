@@ -130,6 +130,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -974,6 +975,18 @@ fun HabitGridScreen(
     var suggestionConfirming by remember { mutableStateOf(false) }
     // Suggestion card whose "don't suggest anymore" popup is open (null = none)
     var excludePopupSuggestion by remember { mutableStateOf<HabitSuggestion?>(null) }
+    // Screen index at which an outside-tap dismissed the flash. When the
+    // screen-switch rebuild effect lands on this same screen, the dismissal —
+    // not a fresh per-screen flash — wins (tap a screen tab: popup closes AND
+    // the tab's screen opens, without the popup popping back up).
+    var suggestionOutsideTapScreen by remember { mutableStateOf(-1) }
+    // Window-space bounds of the suggestion flash popup and the screen root's
+    // origin — used by the root pointer observer (Initial pass) to detect taps
+    // OUTSIDE the flash without any overlay, so taps pass through untouched.
+    var suggestionFlashBounds by remember { mutableStateOf<Rect?>(null) }
+    var suggestionRootOrigin by remember {
+        mutableStateOf(androidx.compose.ui.geometry.Offset.Zero)
+    }
     // Sleep-suite dialog state (SleepDialogs.kt keeps this composable small)
     val sleepDialogState = remember { SleepDialogStateHolder() }
     var showCalendarPicker by remember { mutableStateOf(false) }
@@ -1213,14 +1226,33 @@ fun HabitGridScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .onGloballyPositioned { suggestionRootOrigin = it.positionInWindow() }
             // Observe every pointer event (Initial pass — before children
             // handle it, without consuming) so ANY touch counts as user
-            // activity for the idle shimmer.
+            // activity for the idle shimmer — and so a tap landing OUTSIDE
+            // the suggestion flash closes it while still reaching (and
+            // acting on) whatever was actually tapped underneath.
             .pointerInput(Unit) {
                 awaitPointerEventScope {
                     while (true) {
-                        awaitPointerEvent(PointerEventPass.Initial)
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
                         shimmerInteractionGen.intValue++
+                        // Outside-tap dismissal for the suggestion flash:
+                        // any DOWN whose window position falls outside the
+                        // flash popup's bounds closes it. The event is never
+                        // consumed, so the tap performs its normal action
+                        // (screen tab switch, habit increment, ...) too.
+                        val down = event.changes.firstOrNull { it.pressed }
+                        if (down != null && suggestionFlashVisible) {
+                            val bounds = suggestionFlashBounds
+                            if (bounds != null) {
+                                val windowPos = suggestionRootOrigin + down.position
+                                if (!bounds.contains(windowPos)) {
+                                    suggestionOutsideTapScreen = activeScreenIndex
+                                    suggestionFlashVisible = false
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -2375,8 +2407,9 @@ fun HabitGridScreen(
         }
     }
     // Auto-close the suggestion flash once the user interacts with anything else
-    // on the habit screen: a normal increment (habits list changes), switching
-    // habit screens, or entering edit/graph/schedule mode.
+    // on the habit screen: a normal increment (habits list changes) or entering
+    // edit/graph/schedule mode. Switching habit screens does NOT close it —
+    // the rebuild effect below re-scopes the suggestions to the new screen.
     var suggestionHideSnapshot by remember {
         mutableStateOf<Triple<Int, Int, Boolean>?>(null)
     }
@@ -2390,13 +2423,16 @@ fun HabitGridScreen(
     LaunchedEffect(habits, activeScreenIndex, editMode, graphMode, scheduleMode, selectedDate) {
         val snap = suggestionHideSnapshot ?: return@LaunchedEffect
         if (!suggestionFlashVisible) return@LaunchedEffect
-        val changed = habits.hashCode() != snap.first ||
-            activeScreenIndex != snap.second ||
+        // A habit-screen switch triggers the per-screen rebuild below instead
+        // of hiding; the habits-list hash also changes on a screen switch
+        // (each screen shows its own habits), so skip it while switched.
+        val screenSwitched = activeScreenIndex != snap.second
+        val changed = (habits.hashCode() != snap.first && !screenSwitched) ||
             editMode || graphMode || scheduleMode ||
             selectedDate != java.time.LocalDate.now()
         if (changed) {
             if (suggestionConfirming && habits.hashCode() != snap.first &&
-                activeScreenIndex == snap.second && !editMode && !graphMode &&
+                !screenSwitched && !editMode && !graphMode &&
                 !scheduleMode && selectedDate == java.time.LocalDate.now()
             ) {
                 // The habits-list change came from a suggestion-card ✓ —
@@ -2409,11 +2445,52 @@ fun HabitGridScreen(
             }
         }
     }
+    // ── Per-screen suggestion flash ────────────────────────────────────────
+    // On every switch to a different habits grid screen (tab tap or swipe),
+    // rebuild the suggestions scoped to that screen only — the same scoring,
+    // restricted to the habits that live on the newly shown screen. The very
+    // first run only arms the effect (the app-open flash is the global build
+    // above); every subsequent activeScreenIndex change rebuilds.
+    var suggestionScreenSwitchArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(activeScreenIndex, habitScreens.size, isLoading, isToday) {
+        if (isLoading || !isToday || habitScreens.size < 2) return@LaunchedEffect
+        if (!suggestionScreenSwitchArmed) {
+            suggestionScreenSwitchArmed = true
+            return@LaunchedEffect
+        }
+        if (!settings.suggestionFlashEnabled) return@LaunchedEffect
+        if (editMode || graphMode || scheduleMode) return@LaunchedEffect
+        // An outside-tap dismissal on this same screen wins over the rebuild:
+        // the popup closes and stays closed; the tap itself was already
+        // passed through to the underlying UI (tab tap, habit tile, ...).
+        if (suggestionOutsideTapScreen == activeScreenIndex) {
+            suggestionOutsideTapScreen = -1
+            return@LaunchedEffect
+        }
+        suggestionOutsideTapScreen = -1
+        viewModel.buildHabitSuggestions(screenIndex = activeScreenIndex) { built ->
+            suggestions = built
+            suggestionFlashVisible = built.isNotEmpty()
+            // Refresh the auto-hide snapshot directly: if the flash was
+            // already visible, the LaunchedEffect(suggestionFlashVisible)
+            // won't re-run, and the snapshot must track the NEW screen.
+            suggestionHideSnapshot = if (built.isNotEmpty()) {
+                Triple(habits.hashCode(), activeScreenIndex, false)
+            } else null
+        }
+    }
     if (suggestionFlashVisible && !editMode && !graphMode && !scheduleMode) {
+        // No overlay here — outside-tap dismissal is handled by the root
+        // Box's Initial-pass pointer observer (see top of the composable),
+        // so taps on tabs / tiles beneath pass through and act normally.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 150.dp)
+                // Publish the flash's window-space bounds so the root pointer
+                // observer can tell inside-taps (flash buttons) from
+                // outside-taps (everything else → dismiss).
+                .onGloballyPositioned { suggestionFlashBounds = it.boundsInWindow() }
         ) {
             SuggestionFlash(
                 suggestions = suggestions,

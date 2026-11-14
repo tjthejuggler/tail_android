@@ -120,8 +120,9 @@ fun MealEditorContent(
     val logZdt = remember(log.id) {
         Instant.ofEpochMilli(log.timestamp).atZone(ZoneId.systemDefault())
     }
-    // Date is read-only; time is edited exclusively through the wheel popup.
-    val dateText = remember(log.id) { logZdt.toLocalDate().format(EDIT_DATE_FMT) }
+    // Date is edited via the system date picker popup; time via the wheel.
+    var dateText by remember(log.id) { mutableStateOf(logZdt.toLocalDate().format(EDIT_DATE_FMT)) }
+    var showDatePicker by remember { mutableStateOf(false) }
     var timeText by remember(log.id) { mutableStateOf(logZdt.toLocalTime().format(EDIT_TIME_FMT)) }
     var showTimeWheel by remember { mutableStateOf(false) }
     var wheelHour by remember(log.id) { mutableStateOf(logZdt.hour) }
@@ -380,7 +381,8 @@ fun MealEditorContent(
             ) {
                 Surface(
                     shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier.clickable { showDatePicker = true }
                 ) {
                     Text(
                         "📅 $dateText",
@@ -388,6 +390,21 @@ fun MealEditorContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
                     )
+                }
+                if (showDatePicker) {
+                    val initDate = try {
+                        LocalDate.parse(dateText, EDIT_DATE_FMT)
+                    } catch (e: Exception) {
+                        logZdt.toLocalDate()
+                    }
+                    android.app.DatePickerDialog(
+                        context,
+                        { _, y, m, d ->
+                            dateText = String.format("%04d-%02d-%02d", y, m + 1, d)
+                            showDatePicker = false
+                        },
+                        initDate.year, initDate.monthValue - 1, initDate.dayOfMonth
+                    ).apply { setOnCancelListener { showDatePicker = false } }.show()
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 OutlinedButton(onClick = { showTimeWheel = !showTimeWheel }) {
