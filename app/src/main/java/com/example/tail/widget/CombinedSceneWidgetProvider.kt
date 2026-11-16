@@ -80,7 +80,33 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
         private val figureState = HashMap<SceneFigureClient.App, FigureEntry>()
         private val layerCache = HashMap<String, Bitmap?>()
         private val lizardCache = HashMap<String, Bitmap?>()
-        private val backgroundCache = HashMap<Long, Bitmap>()
+        private val backgroundCache = HashMap<String, Bitmap>()
+        private val waterGlassCache = HashMap<String, Bitmap?>()
+        private val waterFillCache = HashMap<String, Bitmap?>()
+
+        /**
+         * Last-known water-glass level (0..1000 = fill fraction ×1000;
+         * −1 = no water habit configured), persisted so the synchronous
+         * rebind path can paint the glass without a DB round-trip —
+         * same never-vanish guarantee as [TierStateStore].
+         */
+        object WaterLevelStore {
+            private const val PREFS = "tier_bar_widget"
+            private const val KEY = "scene_water_level_x1000"
+
+            fun save(context: Context, level: Float?) {
+                val v = if (level == null) -1
+                        else (level * 1000).toInt().coerceIn(0, 1000)
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putInt(KEY, v).apply()
+            }
+
+            fun load(context: Context): Float? {
+                val v = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getInt(KEY, -1)
+                return if (v < 0) null else (v / 1000f).coerceIn(0f, 1f)
+            }
+        }
 
         /**
          * Recomputes tiers, pulls both guest figures (hash-gated) and
@@ -99,6 +125,7 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             var avg7 = 0.0
             var avg30 = 0.0
             var habitScreenCount = 0
+            var waterLevel: Float? = null
             try {
                 val settings = SettingsRepository(appContext).settingsFlow.first()
                 habitScreenCount = settings.habitScreens.size
@@ -108,6 +135,11 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                     )
                     val db = (result as? HabitsLoadResult.Success)?.db
                     if (db != null) {
+                        // Water glass level (1 = full morning glass, 0 = goal
+                        // met, null = no water-type habit configured).
+                        waterLevel = WaterGlass.levelFor(
+                            db, settings.waterHabits, settings.waterDailyGoals
+                        )
                         val stats = computeTaskerStats(
                             db = db,
                             dividers = settings.habitDividers,
@@ -133,6 +165,8 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 dayPoints = today
             )
             TierStateStore.save(appContext, tiers)
+            // Persist the water level for the synchronous rebind path.
+            WaterLevelStore.save(appContext, waterLevel)
 
             // Guest figures — hash-gated provider pull (no-op when unchanged).
             // Overwrites the per-app entry: old art can never resurface.
@@ -145,7 +179,9 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
 
             if (ids.isEmpty()) return
             for (id in ids) {
-                val views = buildRenderViews(appContext, tiers, mgr, intArrayOf(id), id)
+                val views = buildRenderViews(
+                    appContext, tiers, mgr, intArrayOf(id), id, waterLevel
+                )
                 mgr.updateAppWidget(id, views)
             }
         }
@@ -157,13 +193,17 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
          * DB). Used by both the async refresh and the synchronous rebind
          * answer so host-painted frames match the settled state.
          * [widgetId] keys the per-day ground variety seed.
+         * [waterLevelOverride] lets the async refresh pass the freshly
+         * computed glass level; when null the persisted last-known level
+         * is used (synchronous rebind path).
          */
         fun buildRenderViews(
             appContext: Context,
             tiers: TierStateStore.Tiers,
             mgr: AppWidgetManager,
             ids: IntArray,
-            widgetId: Int = ids.firstOrNull() ?: 0
+            widgetId: Int = ids.firstOrNull() ?: 0,
+            waterLevelOverride: Float? = null
         ): RemoteViews {
             val kenga = cachedFigure(appContext, SceneFigureClient.App.KENGA)
             val octo = cachedFigure(appContext, SceneFigureClient.App.OCTO)
@@ -270,6 +310,9 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 }
             }
 
+            // Water glass level: async refresh override, else last persisted.
+            val waterLevel = waterLevelOverride ?: WaterLevelStore.load(appContext)
+
             // Per-widget scene bitmap sized to the widget's real aspect.
             for (id in ids) {
                 val opts = mgr.getAppWidgetOptions(id)
@@ -280,7 +323,8 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                     R.id.scene_bg,
                     buildScene(
                         appContext, tiers.monthTier, tiers.weekTier,
-                        tiers.dayTier, aspect, tiers.dayPoints, id, kenga, octo
+                        tiers.dayTier, aspect, tiers.dayPoints, id, kenga, octo,
+                        waterLevel
                     )
                 )
             }
@@ -428,6 +472,8 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
          *   lizard — left-of-centre, standing on the ground line (daily
          *            tier + per-point morph art), tail reaching right
          *   guests — Kenga then Octo, right-anchored pair, larger
+         *   glass  — water-habit depletion glass, LEFT edge, ~3/4 height
+         *            (only when a water-type habit is configured)
          */
         private fun buildScene(
             context: Context,
@@ -438,18 +484,20 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             dayPoints: Int,
             widgetId: Int,
             kenga: Bitmap?,
-            octo: Bitmap?
+            octo: Bitmap?,
+            waterLevel: Float? = null
         ): Bitmap {
             val kHash = figureState[SceneFigureClient.App.KENGA]?.hash ?: ""
             val oHash = figureState[SceneFigureClient.App.OCTO]?.hash ?: ""
-            val key = (monthTier.toLong() shl 56) or
-                (weekTier.toLong() shl 52) or
-                (dayTier.toLong() shl 48) or
-                ((dayPoints.coerceIn(-1, 127).toLong() and 0x7FL) shl 40) or
-                (((aspect * 10).toInt().toLong().coerceIn(0, 255)) shl 32) or
-                ((widgetId.toLong() and 0x7F) shl 24) or
-                (((kHash.hashCode().toLong()) and 0xFFFL) shl 12) or
-                ((oHash.hashCode().toLong()) and 0xFFFL)
+            // String key — every input occupies its own labelled slot so
+            // no bit-packing collisions can serve a stale scene (the
+            // earlier OR-fold collided water-level bits with the figure
+            // hash folds, hiding the water behind a cached frame).
+            val waterKey = if (waterLevel == null) "n"
+                else "${(waterLevel * 1000).toInt().coerceIn(0, 1000)}"
+            val key = "m${monthTier}w${weekTier}d${dayTier}" +
+                "p${dayPoints}a${(aspect * 10).toInt()}" +
+                "i${widgetId}k${kHash}o${oHash}g$waterKey"
             backgroundCache[key]?.let { return it }
             if (backgroundCache.size > 8) backgroundCache.clear()
 
@@ -492,6 +540,19 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             // Standing line: a little way into the ground band.
             val baseline = h - groundH * 0.30f
 
+            // 2½. WATER GLASS — depletion glass for water-type habits,
+            //     LEFT edge, ~3/4 of the widget height (drawn before the
+            //     figures so characters can slightly overlap it, exactly
+            //     like the guests tuck behind each other).
+            WaterGlass.drawGlass(
+                canvas, context, w, h, baseline, waterLevel, paint,
+                waterGlassCache, waterFillCache
+            )
+            // Reserve the glass's width so the lizard never stands in it.
+            val glassReserved = if (waterLevel != null)
+                h * WaterGlass.RESERVED_WIDTH_PER_H + w * 0.01f
+            else 0f
+
             // 4. GUESTS first (right pair) so the lizard's tail can tuck
             //    slightly behind them. Both bottom-anchored on the baseline.
             val guestH = h * 0.74f
@@ -511,8 +572,10 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 val drawW = drawH * (lizard.width.toFloat() / lizard.height)
                 // Centre the figure in the free space LEFT of the guests,
                 // leaving ~6% width so the tail overlaps their edge.
+                // With the water glass present, shift the free-space LEFT
+                // edge past the glass so the two never collide.
                 val guestsTotal = octoW + kengaW + w * 0.02f
-                val freeLeft = 0f
+                val freeLeft = glassReserved
                 val freeRight = w - guestsTotal
                 val left = ((freeLeft + freeRight - drawW) / 2f)
                     .coerceAtLeast(-drawW * 0.10f)

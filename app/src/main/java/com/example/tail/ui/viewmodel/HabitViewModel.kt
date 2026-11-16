@@ -1109,6 +1109,11 @@ class HabitViewModel(
             // (count-coded dosing) and backfill structured dose history.
             runPillLogMigration()
 
+            // One-time migration: auto-enable the water type (+ 3500 ml goal)
+            // on the legacy "Water" habit so the scene widget's depletion
+            // glass works out of the box.
+            runWaterHabitMigration()
+
             // Drop orphaned conditional-link entries (key no longer marked conditional)
             // so they don't surface as phantom "Fed by" sources in edit mode.
             settingsRepo.pruneOrphanedConditionalLinks()

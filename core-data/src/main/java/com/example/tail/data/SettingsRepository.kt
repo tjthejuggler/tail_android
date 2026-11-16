@@ -122,6 +122,11 @@ private val KEY_SICK_EPISODE_MIGRATED = booleanPreferencesKey("sick_episode_migr
 private val KEY_SUBTYPED_HABITS = stringSetPreferencesKey("subtyped_habits")
 // Pill log habit type keys (count-coded dosing for "Took pills")
 private val KEY_PILL_LOG_HABITS = stringSetPreferencesKey("pill_log_habits")
+// Water habit type keys (daily hydration goal + scene-widget depletion glass)
+private val KEY_WATER_HABITS = stringSetPreferencesKey("water_habits")
+private val KEY_WATER_DAILY_GOALS = stringPreferencesKey("water_daily_goals")
+// One-time migration: auto-enable the water type on the legacy "Water" habit
+private val KEY_MIGRATION_WATER_DONE = booleanPreferencesKey("migration_water_done")
 // Blood test habit type keys (structured lab-item database behind one square)
 private val KEY_BLOOD_TEST_HABITS = stringSetPreferencesKey("blood_test_habits")
 // Pill catalog: name → composition description, stored with the KV codec
@@ -1244,6 +1249,8 @@ class SettingsRepository(private val context: Context) {
             sickEpisodeMigrated = prefs[KEY_SICK_EPISODE_MIGRATED] ?: false,
             subtypedHabits = prefs[KEY_SUBTYPED_HABITS] ?: emptySet(),
             pillLogHabits = prefs[KEY_PILL_LOG_HABITS] ?: emptySet(),
+            waterHabits = prefs[KEY_WATER_HABITS] ?: emptySet(),
+            waterDailyGoals = decodeIntMap(prefs[KEY_WATER_DAILY_GOALS] ?: ""),
             bloodTestHabits = prefs[KEY_BLOOD_TEST_HABITS] ?: emptySet(),
             pillCatalog = decodeFileUriMap(prefs[KEY_PILL_CATALOG] ?: ""),
             habitSubtypes = decodeSubtypesMap(habitSubtypesRaw),
@@ -1764,6 +1771,18 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { prefs -> prefs[KEY_PILL_LOG_HABITS] = habits }
     }
 
+    /** Saves the set of habits that have the "water" type enabled. */
+    suspend fun saveWaterHabits(habits: Set<String>) {
+        context.dataStore.edit { prefs -> prefs[KEY_WATER_HABITS] = habits }
+    }
+
+    /** Saves the map of water habit name → daily goal in millilitres. */
+    suspend fun saveWaterDailyGoals(goals: Map<String, Int>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_WATER_DAILY_GOALS] = encodeIntMap(goals)
+        }
+    }
+
     /** Saves the set of habits that have the "blood test" type enabled. */
     suspend fun saveBloodTestHabits(habits: Set<String>) {
         context.dataStore.edit { prefs -> prefs[KEY_BLOOD_TEST_HABITS] = habits }
@@ -1780,6 +1799,14 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun markPillLogMigrationDone() {
         context.dataStore.edit { it[KEY_MIGRATION_PILL_LOG_DONE] = true }
+    }
+
+    /** True once the one-time "Water" → water-type migration has run. */
+    suspend fun isWaterMigrationDone(): Boolean =
+        context.dataStore.data.first()[KEY_MIGRATION_WATER_DONE] ?: false
+
+    suspend fun markWaterMigrationDone() {
+        context.dataStore.edit { it[KEY_MIGRATION_WATER_DONE] = true }
     }
 
     /** Episode habit type ("Injury (episode)") — type set, per-habit episode file URIs, migration flag. */

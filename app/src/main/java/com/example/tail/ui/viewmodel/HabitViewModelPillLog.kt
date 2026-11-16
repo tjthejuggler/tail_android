@@ -4,6 +4,9 @@ package com.example.tail.ui.viewmodel
 // Split out of HabitViewModel.kt following the per-feature file convention.
 
 import androidx.lifecycle.viewModelScope
+import com.example.tail.data.DEFAULT_WATER_DAILY_GOAL
+import com.example.tail.data.HabitsLoadResult
+import com.example.tail.data.HabitsRepository
 import com.example.tail.data.PillDayDoses
 import com.example.tail.data.PillDoseRepository
 import com.example.tail.data.PillLogParser
@@ -434,6 +437,109 @@ fun HabitViewModel.runPillLogMigration() {
             android.util.Log.i("PillLogMigration", "Pill log migration complete")
         } catch (e: Exception) {
             android.util.Log.e("PillLogMigration", "Migration failed (will retry next launch)", e)
+        }
+    }
+}
+
+/**
+ * Toggles the "water" habit type for [habitName]. Water habits behave
+ * exactly like normal habits; the type adds the daily-goal setting that
+ * drives the scene widget's depletion glass. When the type is switched
+ * on, a goal of [DEFAULT_WATER_DAILY_GOAL] ml is seeded unless the habit
+ * already has one (e.g. from a previous enable), so the edit panel and
+ * widget immediately show a sensible value.
+ */
+fun HabitViewModel.toggleWaterHabit(habitName: String) {
+    viewModelScope.launch {
+        val current = _settings.value.waterHabits.toMutableSet()
+        val goals = _settings.value.waterDailyGoals
+        var newGoals = goals
+        if (habitName in current) {
+            current.remove(habitName)
+        } else {
+            current.add(habitName)
+            if (habitName !in goals || goals[habitName]!! <= 0) {
+                newGoals = goals + (habitName to DEFAULT_WATER_DAILY_GOAL)
+            }
+        }
+        settingsRepo.saveWaterHabits(current)
+        if (newGoals != goals) settingsRepo.saveWaterDailyGoals(newGoals)
+        _settings.value = _settings.value.copy(
+            waterHabits = current,
+            waterDailyGoals = newGoals
+        )
+    }
+}
+
+/**
+ * Sets the daily drinking goal (ml) for water-type habit [habitName].
+ * Clamped to a sane 1..20000 ml range; the widget's glass re-renders on
+ * the next refresh (goal changes usually come through the edit panel,
+ * whose save path already triggers AppHooks.refreshWidgets via settings).
+ */
+fun HabitViewModel.setWaterDailyGoal(habitName: String, goalMl: Int) {
+    viewModelScope.launch {
+        val clamped = goalMl.coerceIn(1, 20000)
+        val goals = _settings.value.waterDailyGoals + (habitName to clamped)
+        settingsRepo.saveWaterDailyGoals(goals)
+        _settings.value = _settings.value.copy(waterDailyGoals = goals)
+    }
+}
+
+/**
+ * One-time migration (flag: migration_water_done): auto-enables the
+ * water type on the legacy **"Water"** habit — the user's existing ml
+ * habit — with the [DEFAULT_WATER_DAILY_GOAL] (3500 ml) goal, so the
+ * widget's depletion glass works out of the box without hunting for the
+ * toggle. A habit literally named "Water" (case-insensitive) is a
+ * member too. The toggle stays fully reversible in the edit panel.
+ */
+fun HabitViewModel.runWaterHabitMigration() {
+    viewModelScope.launch {
+        try {
+            if (settingsRepo.isWaterMigrationDone()) return@launch
+
+            // Read persisted settings FRESH — at init time _settings may
+            // still hold defaults (the pill-log v1 migration hit this).
+            val s = settingsRepo.settingsFlow.first()
+            val water = s.waterHabits.toMutableSet()
+            val goals = s.waterDailyGoals
+
+            var legacy = s.habitScreens.flatMap { it.habitNames }
+                .plus(s.habitOrder)
+                .map { it.trim() }
+                .firstOrNull { it.equals("Water", ignoreCase = true) }
+            if (legacy == null && s.fileUri.isNotEmpty()) {
+                // Fallback: the settings lists can lag; the habits DB is
+                // the authoritative habit-name source.
+                try {
+                    val result = HabitsRepository().loadDatabaseResult(
+                        android.net.Uri.parse(s.fileUri), context
+                    )
+                    val db = (result as? HabitsLoadResult.Success)?.db
+                    legacy = db?.keys?.firstOrNull { it.equals("Water", ignoreCase = true) }
+                } catch (e: Exception) {
+                    android.util.Log.w("WaterMigration", "DB scan failed: ${e.message}")
+                }
+            }
+            if (legacy != null && legacy !in water) {
+                water.add(legacy)
+                settingsRepo.saveWaterHabits(water)
+                if (legacy !in goals || goals[legacy]!! <= 0) {
+                    settingsRepo.saveWaterDailyGoals(goals + (legacy to DEFAULT_WATER_DAILY_GOAL))
+                }
+                // Refresh the widgets NOW so the depletion glass appears
+                // immediately (not just on the next increment).
+                try {
+                    com.example.tail.data.AppHooks.refreshWidgets?.invoke(context)
+                } catch (_: Exception) {
+                }
+                android.util.Log.i("WaterMigration", "Water type enabled on '$legacy' (goal 3500 ml)")
+            }
+
+            settingsRepo.markWaterMigrationDone()
+        } catch (e: Exception) {
+            android.util.Log.e("WaterMigration", "Migration failed (will retry next launch)", e)
         }
     }
 }

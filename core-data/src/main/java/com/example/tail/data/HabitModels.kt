@@ -777,6 +777,12 @@ const val GRAPH_METRIC_WEIGHTS_FREE_REPS = "weights_free_reps"
 const val WEIGHT_UNIT_KG = "kg"
 const val WEIGHT_UNIT_LB = "lb"
 
+/**
+ * Default daily drinking goal (ml) for water-type habits, used when no
+ * explicit goal is configured in [AppSettings.waterDailyGoals].
+ */
+const val DEFAULT_WATER_DAILY_GOAL = 3500
+
 /** Exact grams per pound (international avoirdupois definition). */
 const val GRAMS_PER_LB = 453.59237
 
@@ -1263,6 +1269,25 @@ data class AppSettings(
      * [PillLogParser.DEFAULT_CATALOG]; user edits win over re-seeding.
      */
     val pillCatalog: Map<String, String> = emptyMap(),
+
+    /**
+     * Habits that have the "water" type enabled (the daily hydration
+     * glass). The habit behaves EXACTLY like a normal habit in every
+     * respect — taps, points, streaks, history — with one addition: it
+     * carries a daily millilitre goal ([waterDailyGoals]) that drives the
+     * depletion-glass visual on the combined-scene home-screen widget.
+     * The raw stored value is the day's intake in ml (voice increments
+     * already default to 500 ml via [voiceTriggerIncrements]).
+     */
+    val waterHabits: Set<String> = emptySet(),
+
+    /**
+     * Maps water habit name → daily drinking goal in millilitres
+     * (default [DEFAULT_WATER_DAILY_GOAL], 3500 ml). Progress toward the
+     * goal is rendered as a draining glass on the widget: full in the
+     * morning, empty once the goal is met (frozen there for the day).
+     */
+    val waterDailyGoals: Map<String, Int> = emptyMap(),
 
     /**
      * Habits that use EPISODE capture ("Injury (episode)"): one structured

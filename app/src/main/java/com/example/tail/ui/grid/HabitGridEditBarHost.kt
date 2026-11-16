@@ -12,6 +12,8 @@ import com.example.tail.ui.viewmodel.invertHabit
 import com.example.tail.ui.viewmodel.setComboHabitMembers
 import com.example.tail.ui.viewmodel.renameHabit
 import com.example.tail.ui.viewmodel.togglePillLog
+import com.example.tail.ui.viewmodel.toggleWaterHabit
+import com.example.tail.ui.viewmodel.setWaterDailyGoal
 import com.example.tail.ui.viewmodel.toggleBloodTest
 import com.example.tail.ui.viewmodel.loadBloodTestEntriesForDate
 import com.example.tail.ui.viewmodel.openNotificationListenerSettings
@@ -220,6 +222,10 @@ internal fun EditBarHost(
         habitSubtypes = settings.habitSubtypes,
         pillLogHabits = settings.pillLogHabits,
         onTogglePillLog = { name -> viewModel.togglePillLog(name) },
+        waterHabits = settings.waterHabits,
+        waterDailyGoals = settings.waterDailyGoals,
+        onToggleWater = { name -> viewModel.toggleWaterHabit(name) },
+        onSetWaterGoal = { name, goal -> viewModel.setWaterDailyGoal(name, goal) },
         bloodTestHabits = settings.bloodTestHabits,
         onToggleBloodTest = { name -> viewModel.toggleBloodTest(name) },
         onLoadBloodTestResults = { name, date, cb ->

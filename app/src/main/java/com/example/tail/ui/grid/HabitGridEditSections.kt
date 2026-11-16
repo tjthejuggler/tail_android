@@ -26,6 +26,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.animateScrollBy
@@ -483,6 +484,7 @@ internal fun SpecialHabitTypesSection(
     phoneUsageContent: @Composable () -> Unit = {},
     episodeContent: @Composable () -> Unit = {},
     pillLogContent: @Composable () -> Unit = {},
+    waterContent: @Composable () -> Unit = {},
     bloodTestContent: @Composable () -> Unit = {},
     githubContent: @Composable () -> Unit,
     movieBridgeContent: @Composable () -> Unit
@@ -532,9 +534,103 @@ internal fun SpecialHabitTypesSection(
         phoneUsageContent()
         episodeContent()
         pillLogContent()
+        waterContent()
         bloodTestContent()
         githubContent()
         movieBridgeContent()
+    }
+}
+
+/**
+ * Water habit type toggle + daily-goal editor (ml).
+ *
+ * The type changes nothing about how the habit increments — it only adds
+ * the goal that drives the combined-scene widget's depletion glass. When
+ * enabled, a −/+ stepper edits the goal in 100 ml steps (with direct
+ * entry via long-press-free text field), defaulting to
+ * [DEFAULT_WATER_DAILY_GOAL] (3500 ml).
+ */
+@Composable
+internal fun WaterTypeSection(
+    habitName: String,
+    enabled: Boolean,
+    goalMl: Int,
+    onToggle: (String) -> Unit,
+    onSetGoal: (String, Int) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = "Water", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(
+                    text = if (enabled) "Daily ml goal — glass drains on scene widget"
+                    else "Daily hydration goal (ml)",
+                    color = Color(0xFF888888), fontSize = 10.sp
+                )
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { onToggle(habitName) },
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color(0xFF88CCFF),
+                    checkedTrackColor = Color(0xFF0A3A5A),
+                    uncheckedThumbColor = Color(0xFF888888),
+                    uncheckedTrackColor = Color(0xFF333333)
+                )
+            )
+        }
+
+        if (enabled) {
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "  Daily goal",
+                    color = Color(0xFFAAAAAA), fontSize = 12.sp
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // −100 ml
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF0A3A5A))
+                            .clickable {
+                                onSetGoal(habitName, (goalMl - 100).coerceAtLeast(100))
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("−", color = Color(0xFF88CCFF), fontSize = 16.sp)
+                    }
+                    Text(
+                        text = "${goalMl}ml",
+                        color = Color(0xFF88CCFF),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp)
+                    )
+                    // +100 ml
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF0A3A5A))
+                            .clickable {
+                                onSetGoal(habitName, (goalMl + 100).coerceAtMost(20000))
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("+", color = Color(0xFF88CCFF), fontSize = 16.sp)
+                    }
+                }
+            }
+        }
     }
 }
 

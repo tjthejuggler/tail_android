@@ -63,6 +63,7 @@ zai_API_KEY.txt
 # Generated wallpaper images (raw + final)
 wallpaper_gen/raw/
 wallpaper_gen/final/
+wallpaper_gen/raw_water/
 
 # Phone habits-DB backups (personal data; rotated by bridge_server:
 # newest 200 snaps kept, 90-day max age — don't track)
@@ -70,6 +71,9 @@ tail_bridge/backups/
 
 # Editor/tooling local state
 .lsp_mcp.port
+
+# Workspace scratch dir (temp images, dumps, APKs) — never commit
+.tmp/
 
 # Archived one-off data (personal backups, runtime dumps)
 /archive/data/

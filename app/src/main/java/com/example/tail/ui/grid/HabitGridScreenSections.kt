@@ -1952,6 +1952,14 @@ internal fun EditModeControlBar(
     pillLogHabits: Set<String> = emptySet(),
     /** Called when the user toggles the pill-log type for a habit. */
     onTogglePillLog: (String) -> Unit = {},
+    /** Habits with the "water" type (daily hydration goal) enabled. */
+    waterHabits: Set<String> = emptySet(),
+    /** Water habit name → daily goal in millilitres. */
+    waterDailyGoals: Map<String, Int> = emptyMap(),
+    /** Called when the user toggles the water type for a habit. */
+    onToggleWater: (String) -> Unit = {},
+    /** Called when the user changes a water habit's daily goal (ml). */
+    onSetWaterGoal: (String, Int) -> Unit = { _, _ -> },
     /** Habits with the blood-test type (structured lab items) enabled. */
     bloodTestHabits: Set<String> = emptySet(),
     onLoadBloodTestResults: (
@@ -3301,6 +3309,16 @@ internal fun EditModeControlBar(
                                 habitName = selHabitName,
                                 enabled = selHabitName in pillLogHabits,
                                 onToggle = onTogglePillLog
+                            )
+                        },
+                        waterContent = {
+                            WaterTypeSection(
+                                habitName = selHabitName,
+                                enabled = selHabitName in waterHabits,
+                                goalMl = waterDailyGoals[selHabitName]
+                                    ?: com.example.tail.data.DEFAULT_WATER_DAILY_GOAL,
+                                onToggle = onToggleWater,
+                                onSetGoal = onSetWaterGoal
                             )
                         },
                         bloodTestContent = {
