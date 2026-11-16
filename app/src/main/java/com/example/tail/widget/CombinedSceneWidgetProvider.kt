@@ -313,6 +313,10 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             // Water glass level: async refresh override, else last persisted.
             val waterLevel = waterLevelOverride ?: WaterLevelStore.load(appContext)
 
+            // Kenga's confidence (last-known zones count, no provider query):
+            // ≥4 colored areas today -> he renders in front of the lizard.
+            val kengaInFront = kengaConfident(appContext)
+
             // Per-widget scene bitmap sized to the widget's real aspect.
             for (id in ids) {
                 val opts = mgr.getAppWidgetOptions(id)
@@ -324,25 +328,44 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                     buildScene(
                         appContext, tiers.monthTier, tiers.weekTier,
                         tiers.dayTier, aspect, tiers.dayPoints, id, kenga, octo,
-                        waterLevel
+                        waterLevel, kengaInFront
                     )
                 )
             }
             return views
         }
 
-        /** Current cached figure bitmap for [app] (memory or disk). */
+        /** Current cached figure bitmap for [app] (memory or disk only). */
         private fun cachedFigure(
             appContext: Context,
             app: SceneFigureClient.App
         ): Bitmap? {
-            // Memory fast path (single entry per app); without a fresh hash
-            // probe here (synchronous path must not query providers) fall
-            // back to the disk cache decode.
+            // Memory fast path (single entry per app).
             figureState[app]?.let { return it.bitmap }
-            val fig = SceneFigureClient.fetchIfStale(appContext, app)
+            // DISK-ONLY fallback: this runs on the synchronous rebind path
+            // (onUpdate/onAppWidgetOptionsChanged), which must never touch
+            // providers. fetchIfStale here could block indefinitely when the
+            // guest app is frozen (Samsung Freecess "BG freezed"), hanging
+            // the widget update before any RemoteViews land — the widget
+            // then sits on the host's "Loading…" placeholder forever. The
+            // async refreshAll is responsible for provider pulls; seeding
+            // the memory entry from disk lets it render last-known figures.
+            val fig = SceneFigureClient.diskFigure(appContext, app)
             return fig.bitmap?.also { figureState[app] = FigureEntry(fig.hash, it) }
         }
+
+        /**
+         * Kenga's confidence: how many DISTINCT muscle areas he colored
+         * today (provider `zones` column; last-known value, no query here).
+         * Threshold mirrors Kenga's KangarooBodyGeometry.CONFIDENT_ZONE_COUNT
+         * (kept in sync by the figure-provider ADR): at ≥4 areas he has been
+         * active enough today to step IN FRONT of the lizard.
+         */
+        private const val KENGA_CONFIDENT_ZONES = 4
+
+        private fun kengaConfident(appContext: Context): Boolean =
+            SceneFigureClient.cachedZones(appContext, SceneFigureClient.App.KENGA) >=
+                KENGA_CONFIDENT_ZONES
 
         private fun launchIntent(
             context: Context,
@@ -485,7 +508,8 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             widgetId: Int,
             kenga: Bitmap?,
             octo: Bitmap?,
-            waterLevel: Float? = null
+            waterLevel: Float? = null,
+            kengaInFront: Boolean = false
         ): Bitmap {
             val kHash = figureState[SceneFigureClient.App.KENGA]?.hash ?: ""
             val oHash = figureState[SceneFigureClient.App.OCTO]?.hash ?: ""
@@ -497,7 +521,8 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 else "${(waterLevel * 1000).toInt().coerceIn(0, 1000)}"
             val key = "m${monthTier}w${weekTier}d${dayTier}" +
                 "p${dayPoints}a${(aspect * 10).toInt()}" +
-                "i${widgetId}k${kHash}o${oHash}g$waterKey"
+                "i${widgetId}k${kHash}o${oHash}g$waterKey" +
+                (if (kengaInFront) "f1" else "f0")
             backgroundCache[key]?.let { return it }
             if (backgroundCache.size > 8) backgroundCache.clear()
 
@@ -553,39 +578,50 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 h * WaterGlass.RESERVED_WIDTH_PER_H + w * 0.01f
             else 0f
 
-            // 4. GUESTS first (right pair) so the lizard's tail can tuck
-            //    slightly behind them. Both bottom-anchored on the baseline.
+            // 4/3. GUESTS and LIZARD — z-order depends on Kenga's confidence:
+            //    default: guests first, lizard after -> his tail tucks over
+            //    them. Confident Kenga (≥4 areas colored today): lizard
+            //    first, guests after -> Kenga steps in FRONT of the tail
+            //    (he's been active; he takes the front of the stage).
             val guestH = h * 0.74f
             val guestMargin = w * 0.012f
             val octoW = octo?.let { it.width * (guestH / it.height) } ?: 0f
             val kengaW = kenga?.let { it.width * (guestH / it.height) } ?: 0f
-            // Octo rightmost, Kenga immediately left of him.
-            drawGuest(canvas, octo, guestH, baseline,
-                rightEdge = w - guestMargin, paint = paint)
-            drawGuest(canvas, kenga, guestH, baseline,
-                rightEdge = w - guestMargin - octoW - w * 0.008f, paint = paint)
-
-            // 3. LIZARD — today's tier / per-point morph, left of centre,
-            //    tail reaching toward the guests (drawn after -> on top).
-            lizardBitmap(context, dayTier, dayPoints)?.let { lizard ->
-                val drawH = h * 0.42f
-                val drawW = drawH * (lizard.width.toFloat() / lizard.height)
-                // Centre the figure in the free space LEFT of the guests,
-                // leaving ~6% width so the tail overlaps their edge.
-                // With the water glass present, shift the free-space LEFT
-                // edge past the glass so the two never collide.
-                val guestsTotal = octoW + kengaW + w * 0.02f
-                val freeLeft = glassReserved
-                val freeRight = w - guestsTotal
-                val left = ((freeLeft + freeRight - drawW) / 2f)
-                    .coerceAtLeast(-drawW * 0.10f)
-                canvas.drawBitmap(
-                    lizard, null,
-                    android.graphics.RectF(
-                        left, baseline - drawH, left + drawW, baseline
-                    ),
-                    paint
-                )
+            fun drawGuests() {
+                // Octo rightmost, Kenga immediately left of him.
+                drawGuest(canvas, octo, guestH, baseline,
+                    rightEdge = w - guestMargin, paint = paint)
+                drawGuest(canvas, kenga, guestH, baseline,
+                    rightEdge = w - guestMargin - octoW - w * 0.008f, paint = paint)
+            }
+            fun drawLizard() {
+                lizardBitmap(context, dayTier, dayPoints)?.let { lizard ->
+                    val drawH = h * 0.42f
+                    val drawW = drawH * (lizard.width.toFloat() / lizard.height)
+                    // Centre the figure in the free space LEFT of the guests,
+                    // leaving ~6% width so the tail overlaps their edge.
+                    // With the water glass present, shift the free-space LEFT
+                    // edge past the glass so the two never collide.
+                    val guestsTotal = octoW + kengaW + w * 0.02f
+                    val freeLeft = glassReserved
+                    val freeRight = w - guestsTotal
+                    val left = ((freeLeft + freeRight - drawW) / 2f)
+                        .coerceAtLeast(-drawW * 0.10f)
+                    canvas.drawBitmap(
+                        lizard, null,
+                        android.graphics.RectF(
+                            left, baseline - drawH, left + drawW, baseline
+                        ),
+                        paint
+                    )
+                }
+            }
+            if (kengaInFront) {
+                drawLizard()
+                drawGuests()
+            } else {
+                drawGuests()
+                drawLizard()
             }
 
             canvas.restore()

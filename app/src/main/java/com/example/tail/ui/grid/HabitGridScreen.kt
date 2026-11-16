@@ -2801,34 +2801,78 @@ fun HabitGridScreen(
                 }
             },
             onDeleteTimeGroup = { time ->
+                // INSTANT RESPONSE: flip the editor state optimistically the
+                // moment delete is tapped; the store write (full-file JSON
+                // rewrite + backup snapshot under the timestamp mutex) lands
+                // in the background. Previously the UI awaited the whole
+                // round trip — slow whenever the backup snapshot hogged the
+                // mutex — and a thrown error (e.g. the torn-read guard)
+                // killed the coroutine SILENTLY, so the timestamp "just
+                // didn't delete" with zero feedback.
+                val listBefore = timestampEditorList
+                val minutesBefore = timestampEditorMinutes
+                val removed = listBefore.count { it == time }
+                val minutesPrimary = viewModel.isMinutesPrimaryHabit(habitName)
+                // Minutes-primary: the group's minutes leave the day total too.
+                val groupMinutes = if (minutesPrimary) {
+                    minutesBefore[time] ?: removed
+                } else 0
+                val currentHabit = habits.find { it.name == habitName }
+                // Optimistic flip — the card disappears immediately.
+                timestampEditorList = listBefore.filterNot { it == time }
+                selectedHabitTimestampCount = timestampEditorList.size
+                if (minutesPrimary) {
+                    timestampEditorMinutes = minutesBefore - time
+                }
                 timestampScope.launch {
-                    val removed = timestampEditorList.count { it == time }
-                    val minutesPrimary = viewModel.isMinutesPrimaryHabit(habitName)
-                    // Minutes-primary: the group's minutes leave the day total too.
-                    val groupMinutes = if (minutesPrimary) {
-                        timestampEditorMinutes[time] ?: removed
-                    } else 0
-                    timestampEditorList = viewModel.timestampRepo.deleteTimestampsAtTime(
-                        habitName, selectedDate, time
-                    )
-                    selectedHabitTimestampCount = timestampEditorList.size
-                    if (minutesPrimary) {
-                        timestampEditorMinutes = viewModel.timestampRepo
-                            .getMinutesForDay(habitName, selectedDate)
-                        if (groupMinutes > 0) {
-                            viewModel.setHabitMinutesCount(
-                                habitName,
-                                (viewModel.getMinutesTodayCount(habitName) - groupMinutes)
-                                    .coerceAtLeast(0)
-                            )
+                    try {
+                        timestampEditorList = viewModel.timestampRepo.deleteTimestampsAtTime(
+                            habitName, selectedDate, time
+                        )
+                        selectedHabitTimestampCount = timestampEditorList.size
+                        if (minutesPrimary) {
+                            timestampEditorMinutes = viewModel.timestampRepo
+                                .getMinutesForDay(habitName, selectedDate)
+                            if (groupMinutes > 0) {
+                                viewModel.setHabitMinutesCount(
+                                    habitName,
+                                    (viewModel.getMinutesTodayCount(habitName) - groupMinutes)
+                                        .coerceAtLeast(0)
+                                )
+                            }
                         }
-                    }
-                    // Decrement the habit count to match the removed units
-                    val currentHabit = habits.find { it.name == habitName }
-                    if (currentHabit != null && removed > 0 &&
-                        currentHabit.rawTodayCount > timestampEditorList.size
-                    ) {
-                        viewModel.setHabitCount(habitName, currentHabit.rawTodayCount - removed)
+                        // Decrement the habit count to match the removed units
+                        if (currentHabit != null && removed > 0 &&
+                            currentHabit.rawTodayCount > timestampEditorList.size
+                        ) {
+                            viewModel.setHabitCount(habitName, currentHabit.rawTodayCount - removed)
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Log.e(
+                            "HabitGridScreen",
+                            "Failed to delete timestamp group '$time' for '$habitName'",
+                            e
+                        )
+                        // Revert to the store's truth (falling back to the
+                        // pre-tap snapshot when even the re-read fails) and
+                        // surface the failure — never a silent no-op again.
+                        val reloaded = runCatching {
+                            viewModel.timestampRepo.getTimestampsForDay(habitName, selectedDate)
+                        }.getOrDefault(listBefore)
+                        timestampEditorList = reloaded
+                        selectedHabitTimestampCount = reloaded.size
+                        timestampEditorMinutes = if (minutesPrimary) {
+                            runCatching {
+                                viewModel.timestampRepo.getMinutesForDay(habitName, selectedDate)
+                            }.getOrDefault(minutesBefore)
+                        } else minutesBefore
+                        android.widget.Toast.makeText(
+                            context,
+                            "Couldn't delete timestamp: ${e.message}",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             },

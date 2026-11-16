@@ -146,6 +146,12 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+// Persist-verify retry for setHabitCountForDate — mirrors incrementHabit's
+// INCREMENT_PERSIST_* constants (HabitViewModelData.kt).
+private const val TAG = "HabitVM"
+private const val COUNT_SET_PERSIST_ATTEMPTS = 3
+private const val COUNT_SET_PERSIST_BACKOFF_MS = 500L
+
 /**
  * Translates a raw manual input value into the value that should be STORED for
  * [habitName]. For habits with custom point ranges enabled, the stored value is
@@ -319,16 +325,70 @@ fun HabitViewModel.setHabitCountForDate(habitName: String, newCount: Int, date: 
 
     cachedPhoneDb = updatedDb
 
-    // Step 3: full rebuild + disk write in background
+    // Persist direction for verification (mirrors incrementHabit): after a
+    // verified write, a CONCURRENT legitimate change in our own direction
+    // (e.g. an external increment landing between write and re-read) must
+    // not fail the check and trigger a clobbering retry.
+    val directionUp = storedValue >= currentCount
+
+    // Step 3: full rebuild + VERIFIED disk write in background. A plain
+    // fire-and-forget persist (the old code) could fail silently — a busy
+    // SAF provider can swallow a write without throwing — leaving the cache
+    // and UI at the new value while the file kept the old one. Every later
+    // increment then computed from the stale cache: the "habit fails to
+    // increment / amount not saved" reports.
     viewModelScope.launch {
         rebuildHabitList()
-        try {
-            val uri = Uri.parse(uriString)
-            habitsRepo.persistDatabase(uri, context, updatedDb)
-            HabitsDataChangedBus.emit()
-        } catch (e: Exception) {
-            _errorMessage.value = "Failed to save: ${e.message}"
+        val uri = Uri.parse(uriString)
+        var persisted = false
+        var lastPersistError: Throwable? = null
+        for (attempt in 1..COUNT_SET_PERSIST_ATTEMPTS) {
+            try {
+                var landed = false
+                habitsRepo.withFileLock {
+                    habitsRepo.persistDatabase(uri, context, updatedDb)
+                    val reread = habitsRepo.loadDatabase(uri, context)
+                    val rereadVal = reread[habitName]?.get(dateStr)
+                    landed = if (directionUp) (rereadVal ?: 0) >= storedValue
+                             else (rereadVal ?: Int.MAX_VALUE) <= storedValue
+                    // Custom-range habits: the raw true value lives in the
+                    // secondary slot — verify it landed too.
+                    if (landed && rangePoints != null) {
+                        landed = reread[secondaryValueKey(habitName)]?.get(dateStr) == clamped
+                    }
+                }
+                if (landed) {
+                    persisted = true
+                    break
+                }
+                Log.e(TAG, "Count-set verify failed (attempt $attempt) for '$habitName' — write did not land")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                lastPersistError = e
+                Log.e(TAG, "Failed to persist count for '$habitName' (attempt $attempt): ${e.message}", e)
+            }
+            if (attempt < COUNT_SET_PERSIST_ATTEMPTS) {
+                delay(COUNT_SET_PERSIST_BACKOFF_MS shl (attempt - 1))
+            }
         }
+        if (!persisted) {
+            _errorMessage.value =
+                "Failed to save count for '$habitName'" +
+                    (lastPersistError?.message?.let { ": $it" } ?: " — write did not land")
+            // Resync the optimistic cache with the file and rebuild so the
+            // UI shows the disk truth — a stale-high cache would make every
+            // later increment bail out early ("does not increment").
+            try {
+                cachedPhoneDb = habitsRepo.loadDatabase(uri, context)
+                dbEpoch++
+            } catch (e2: Exception) {
+                Log.w(TAG, "Cache resync after failed count-set persist failed too: ${e2.message}")
+            }
+            rebuildHabitList()
+            return@launch
+        }
+        HabitsDataChangedBus.emit()
     }
 }
 

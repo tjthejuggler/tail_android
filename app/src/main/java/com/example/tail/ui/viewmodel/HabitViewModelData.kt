@@ -1106,6 +1106,10 @@ fun HabitViewModel.incrementHabit(
 
     // Step 5 delta, computed here while the cache values are stable.
     val storedDelta = newCount - currentStored
+    // Custom-range input whose points tier did not change: only the
+    // secondary true-value slot differs, so the persist verification below
+    // must target that slot — the primary check is vacuous there.
+    val trueValueOnly = rangePoints != null && dbDelta == 0
 
     // Step 3: disk write FIRST, then every follow-up effect that must never
     // outlive the count. Previously the timestamps (Steps 4/5) were written
@@ -1137,8 +1141,15 @@ fun HabitViewModel.incrementHabit(
                     habitsRepo.persistDatabase(uri, context, updatedDb)
                     val reread = habitsRepo.loadDatabase(uri, context)
                     val rereadVal = reread[habitName]?.get(dateStr)
-                    landed = if (dbDelta >= 0) (rereadVal ?: 0) >= newCount
-                             else (rereadVal ?: Int.MAX_VALUE) <= newCount
+                    landed = if (trueValueOnly) {
+                        // Tier-unchanged custom-range input: the primary slot
+                        // already equals newCount on disk even when our write
+                        // never landed, so a >= check passes vacuously. Verify
+                        // the secondary true-value slot instead (the "amount
+                        // not saved into the true value" failure).
+                        reread[secondaryValueKey(habitName)]?.get(dateStr) == amount
+                    } else if (dbDelta >= 0) (rereadVal ?: 0) >= newCount
+                    else (rereadVal ?: Int.MAX_VALUE) <= newCount
                 }
                 if (landed) {
                     persisted = true

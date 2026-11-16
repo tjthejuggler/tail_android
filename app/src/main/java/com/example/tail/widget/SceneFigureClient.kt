@@ -15,7 +15,9 @@ import java.security.MessageDigest
  * Protocol (mirrors the existing Tail integration family):
  *  - Provider authority: "com.example.kenga.figure" / "com.example.octo.figure"
  *  - Endpoint: v1/figure -> columns `figure` (PNG bytes), `hash` (String,
- *    content hash of today's rendered figure), `updated` (Long, epoch ms).
+ *    content hash of today's rendered figure), `updated` (Long, epoch ms),
+ *    `zones` (Int, DISTINCT muscle areas the guest worked today; Kenga-only —
+ *    his "confidence" for the scene z-order, see CombinedSceneWidgetProvider).
  *  - Access is guarded by the signature-level TAIL_INTEGRATION permission
  *    Tail already holds (same keystore family), so no new permission wiring.
  *
@@ -32,6 +34,15 @@ object SceneFigureClient {
 
     private const val TAG = "SceneFigureClient"
 
+    /**
+     * Hard time-box for provider binder calls. Guest apps frozen by the OS
+     * (Samsung Freecess) park provider queries indefinitely — without a
+     * timeout the widget refresh loop hangs and the widget stays on the
+     * host's "Loading…" placeholder forever.
+     */
+    private const val PROBE_TIMEOUT_MS = 2_000L
+    private const val PULL_TIMEOUT_MS = 8_000L
+
     /** Broadcast Kenga/Octo send after their figure data changes. */
     const val ACTION_SCENE_FIGURES_CHANGED = "com.example.tail.ACTION_SCENE_FIGURES_CHANGED"
 
@@ -40,8 +51,12 @@ object SceneFigureClient {
         OCTO("com.example.octo", "com.example.octo.figure"),
     }
 
-    /** One app's live figure: decoded bitmap + the hash it was served with. */
-    data class Figure(val bitmap: Bitmap?, val hash: String)
+    /**
+     * One app's live figure: decoded bitmap + the hash it was served with +
+     * today's colored-zone count ([zones], 0 when the provider doesn't
+     * advertise one — older providers / Octo).
+     */
+    data class Figure(val bitmap: Bitmap?, val hash: String, val zones: Int = 0)
 
     // ── disk cache (no_public_DIRS needed: only this app reads these) ─────
 
@@ -50,6 +65,54 @@ object SceneFigureClient {
 
     private fun hashFile(context: Context, app: App): File =
         File(context.cacheDir, "scene_figure_${app.packageName}.hash")
+
+    private fun zonesFile(context: Context, app: App): File =
+        File(context.cacheDir, "scene_figure_${app.packageName}.zones")
+
+    /**
+     * Last-known colored-zone count for [app] WITHOUT a provider query
+     * (the synchronous widget rebind path must not touch providers).
+     * Persisted on every successful [fetchIfStale] probe.
+     */
+    fun cachedZones(context: Context, app: App): Int =
+        try {
+            zonesFile(context, app).readText().trim().toIntOrNull() ?: 0
+        } catch (_: Exception) {
+            0
+        }
+
+    /**
+     * Disk-only figure (NO provider access): cached bitmap + stored hash +
+     * last-known zones. Safe for the synchronous widget rebind path, which
+     * must never block on a provider — a guest app frozen by the OS
+     * (Samsung Freecess "BG freezed") parks the binder call indefinitely,
+     * hanging the widget update and leaving the host's "Loading…"
+     * placeholder on screen forever. The async refresh path is the only
+     * place that talks to providers.
+     */
+    fun diskFigure(context: Context, app: App): Figure {
+        val hash = try {
+            val hs = hashFile(context, app)
+            if (hs.exists()) hs.readText().trim() else ""
+        } catch (_: Exception) { "" }
+        return Figure(cachedBitmap(cacheFile(context, app)), hash, cachedZones(context, app))
+    }
+
+    /**
+     * Runs [block] on a short-lived daemon thread with a hard [ms] timeout.
+     * Content-provider binder calls cannot be cancelled cooperatively, and a
+     * frozen provider process parks them indefinitely — so on timeout we
+     * abandon the thread (it finishes whenever the OS unfreezes the target)
+     * and continue with cached data instead of hanging the caller.
+     */
+    private fun <T> callWithTimeout(ms: Long, block: java.util.concurrent.Callable<T?>): T? =
+        try {
+            val task = java.util.concurrent.FutureTask(block)
+            Thread(task, "figureProbe").apply { isDaemon = true }.start()
+            task.get(ms, java.util.concurrent.TimeUnit.MILLISECONDS)
+        } catch (_: Exception) {
+            null
+        }
 
     /** Content hash of arbitrary bytes (matches provider-side hashing). */
     fun sha256(bytes: ByteArray): String =
@@ -67,28 +130,53 @@ object SceneFigureClient {
         val hashStore = hashFile(context, app)
         try {
             // 1. Cheap probe: what hash is the app serving right now?
+            // Time-boxed (frozen-provider defence) and falls back to the
+            // pre-zones projection for older installed providers that
+            // reject unknown columns.
             var remoteHash: String? = null
             var remoteUpdated = 0L
-            context.contentResolver.query(
-                Uri.parse("content://${app.authority}/v1/figure"),
-                arrayOf("hash", "updated"), null, null, null
-            )?.use { c ->
+            var remoteZones = 0
+            val figureUri = Uri.parse("content://${app.authority}/v1/figure")
+            var cursor = callWithTimeout(PROBE_TIMEOUT_MS) {
+                context.contentResolver.query(
+                    figureUri, arrayOf("hash", "updated", "zones"), null, null, null
+                )
+            }
+            if (cursor == null) {
+                cursor = callWithTimeout(PROBE_TIMEOUT_MS) {
+                    context.contentResolver.query(
+                        figureUri, arrayOf("hash", "updated"), null, null, null
+                    )
+                }
+            }
+            cursor?.use { c ->
                 if (c.moveToFirst()) {
                     remoteHash = c.getString(c.getColumnIndexOrThrow("hash"))
                     remoteUpdated = c.getLong(c.getColumnIndexOrThrow("updated"))
+                    // Optional column (older providers lack it).
+                    val zi = c.getColumnIndex("zones")
+                    if (zi >= 0 && !c.isNull(zi)) remoteZones = c.getInt(zi)
                 }
             }
             if (remoteHash == null || remoteHash == FigureSnapshotContract.EMPTY_HASH) {
                 // App absent, permission denied, or no figure yet today.
-                return Figure(cachedBitmap(cache), remoteHash ?: "")
+                return Figure(cachedBitmap(cache), remoteHash ?: "", 0)
+            }
+            // Persist the confidence metric for the synchronous rebind path.
+            try {
+                zonesFile(context, app).writeText(remoteZones.toString())
+            } catch (_: Exception) {
             }
 
             val localHash = if (hashStore.exists()) hashStore.readText().trim() else ""
             if (remoteHash != localHash || !cache.exists()) {
-                // 2. Hash differs -> pull the actual PNG bytes.
-                val bytes = context.contentResolver.openInputStream(
-                    Uri.parse("content://${app.authority}/v1/figure")
-                )?.use { it.readBytes() }
+                // 2. Hash differs -> pull the actual PNG bytes (time-boxed:
+                // a frozen provider must not stall the refresh loop).
+                val bytes = callWithTimeout(PULL_TIMEOUT_MS) {
+                    context.contentResolver.openInputStream(
+                        Uri.parse("content://${app.authority}/v1/figure")
+                    )?.use { it.readBytes() }
+                }
                 if (bytes != null && bytes.isNotEmpty()) {
                     // Sanity: only cache what decodes and hashes as advertised.
                     val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
@@ -104,12 +192,12 @@ object SceneFigureClient {
                         val processed = fillInteriorHoles(bmp)
                         Log.i(TAG, "${app.packageName} figure updated " +
                                 "(${bytes.size / 1024} KB, hash=${remoteHash?.take(8)}…)")
-                        return Figure(processed, remoteHash!!)
+                        return Figure(processed, remoteHash!!, remoteZones)
                     }
                 }
                 Log.w(TAG, "${app.packageName} served undecodable figure; keeping cache")
             }
-            return Figure(cachedBitmap(cache), remoteHash!!)
+            return Figure(cachedBitmap(cache), remoteHash!!, remoteZones)
         } catch (e: SecurityException) {
             // Signature mismatch — not our app family; degrade silently.
             return Figure(cachedBitmap(cache), "")
@@ -205,6 +293,9 @@ object FigureSnapshotContract {
     const val COL_FIGURE = "figure"
     const val COL_HASH = "hash"
     const val COL_UPDATED = "updated"
+
+    /** Colored body-part areas today (Kenga's confidence; optional column). */
+    const val COL_ZONES = "zones"
 
     /** Provider value when the app has nothing rendered yet. */
     const val EMPTY_HASH = "empty"

@@ -4,7 +4,10 @@ import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -55,6 +58,17 @@ class HabitTimestampRepository(private val context: Context) {
          * losing a timestamp.
          */
         private val fileMutex = Mutex()
+
+        /**
+         * Background scope for post-write backup snapshots. snapshotAll()
+         * reads and hashes every covered file — megabytes of I/O that used
+         * to run synchronously INSIDE fileMutex, adding its latency to every
+         * mutation the UI awaited (the timestamp editor's "delete is slow"
+         * lag). Ordered single-flight: a later write's snapshot waits for
+         * the previous one, but the mutation path never waits at all.
+         */
+        private val backupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val backupNotifyMutex = Mutex()
 
         /**
          * Process-wide parse cache for the timestamp file. [loadAll] is called
@@ -215,12 +229,21 @@ class HabitTimestampRepository(private val context: Context) {
      * behind (2026-10-05 incident hardening). Best-effort, never throws.
      */
     private fun notifyBackupSystems() {
-        try {
-            com.example.tail.data.backup.TimestampSnapshotManager.snapshotAll(context)
-        } catch (_: Exception) {
+        val appContext = context.applicationContext
+        // Snapshot work runs OFF the mutation path (see backupScope). The
+        // bridge arm stays synchronous — it only flips a flag and ensures
+        // the debounced push loop, so the off-device backup trigger can
+        // never be lost to process death right after a write.
+        backupScope.launch {
+            backupNotifyMutex.withLock {
+                try {
+                    com.example.tail.data.backup.TimestampSnapshotManager.snapshotAll(appContext)
+                } catch (_: Exception) {
+                }
+            }
         }
         try {
-            com.example.tail.data.BridgeBackupManager.onTimestampsSaved(context)
+            com.example.tail.data.BridgeBackupManager.onTimestampsSaved(appContext)
         } catch (_: Exception) {
         }
     }
@@ -641,11 +664,15 @@ class HabitTimestampRepository(private val context: Context) {
                 data.remove(habitName)
             }
             saveAll(data)
-            // The group's per-timestamp minutes go with it.
+            // The group's per-timestamp minutes go with it — but only touch
+            // (and rewrite) the minutes sidecar when the habit/day/time
+            // actually HAD a minutes entry. Non-minutes habits previously
+            // rewrote the whole minutes file on every delete for nothing.
             val minutesData = loadMinutesMutable()
-            minutesData[habitName]?.get(dateStr)?.remove(time)
-            pruneEmptyMinutesEntries(minutesData)
-            saveMinutes(minutesData)
+            if (minutesData[habitName]?.get(dateStr)?.remove(time) != null) {
+                pruneEmptyMinutesEntries(minutesData)
+                saveMinutes(minutesData)
+            }
             habitMap[dateStr]?.sorted() ?: emptyList()
         }
     }
