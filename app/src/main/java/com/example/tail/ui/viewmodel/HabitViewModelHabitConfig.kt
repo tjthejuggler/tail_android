@@ -2564,6 +2564,22 @@ fun HabitViewModel.getMinutesTodayCount(habitName: String): Int {
 }
 
 /**
+ * Returns the selected date's TRUE VALUE for [habitName] — the raw
+ * measurement the habit's points are derived from. For custom-point-range
+ * habits the true value lives in the `secondary_value:` slot (the primary
+ * key holds only the computed points tier); for every other habit it is
+ * the habit's own primary slot (the raw count). Null when no entry exists.
+ */
+fun HabitViewModel.getTrueValueToday(habitName: String): Int? {
+    val s = _settings.value
+    val dateStr = com.example.tail.data.dateString(_selectedDate.value)
+    val key = if (habitName in s.customPointRangesHabits &&
+        s.customPointRanges.containsKey(habitName)
+    ) secondaryValueKey(habitName) else habitName
+    return cachedPhoneDb[key]?.get(dateStr)
+}
+
+/**
  * Sets the selected date's minutes for [habitName] in the first-class
  * minutes slot (clamped to ≥ 0), then refreshes the habit list,
  * widgets and listeners.

@@ -76,21 +76,33 @@ class MainActivity : ComponentActivity() {
         /** Intent extra: habit screen (grid tab) index to open on launch
          *  (deep link from the tier-bar widget's touch zones). */
         const val EXTRA_OPEN_SCREEN_INDEX = "open_screen_index"
+
+        /** Intent extra: habit NAME whose grid square should be opened on
+         *  launch (deep link from the combined-scene widget's water glass —
+         *  opens the habit's input dialog as if its square had been tapped). */
+        const val EXTRA_OPEN_HABIT = "open_habit_name"
     }
 
     /** One-shot hand-off: set by the deep-link handler, consumed by
-     *  HabitGridScreen to auto-open the in-app notification dialog and/or
-     *  switch to the deep-linked habit screen tab. Compose state so the
-     *  grid reacts even when the activity is already alive (onNewIntent). */
+     *  HabitGridScreen to auto-open the in-app notification dialog, switch
+     *  to the deep-linked habit screen tab, and/or auto-tap a deep-linked
+     *  habit square. Compose state so the grid reacts even when the
+     *  activity is already alive (onNewIntent). */
     object NotificationsDeepLink {
         private val _open = androidx.compose.runtime.mutableStateOf(false)
         private val _screenIndex = androidx.compose.runtime.mutableIntStateOf(-1)
+        private val _habitName = androidx.compose.runtime.mutableStateOf<String?>(null)
         var open: Boolean
             get() = _open.value
             set(value) { _open.value = value }
         var screenIndex: Int
             get() = _screenIndex.intValue
             set(value) { _screenIndex.intValue = value }
+
+        /** Habit whose square should be tapped programmatically (null = none). */
+        var habitName: String?
+            get() = _habitName.value
+            set(value) { _habitName.value = value }
     }
 
     /** Dedup gate for Smart Open: a config-change recreation redelivers the
@@ -281,6 +293,12 @@ private fun TailApp(
             if (idx >= 0) {
                 explicit = true
                 MainActivity.NotificationsDeepLink.screenIndex = idx
+            }
+        }
+        intent.getStringExtra(MainActivity.EXTRA_OPEN_HABIT)?.let { name ->
+            if (name.isNotBlank()) {
+                explicit = true
+                MainActivity.NotificationsDeepLink.habitName = name
             }
         }
         if (!explicit && MainActivity.SmartOpenGate.shouldHandle(intent)) {

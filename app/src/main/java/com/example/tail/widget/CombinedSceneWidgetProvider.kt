@@ -93,12 +93,17 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
         object WaterLevelStore {
             private const val PREFS = "tier_bar_widget"
             private const val KEY = "scene_water_level_x1000"
+            private const val KEY_HABIT = "scene_water_habit_name"
 
-            fun save(context: Context, level: Float?) {
+            fun save(context: Context, level: Float?, habitName: String? = null) {
                 val v = if (level == null) -1
                         else (level * 1000).toInt().coerceIn(0, 1000)
                 context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                    .edit().putInt(KEY, v).apply()
+                    .edit().apply {
+                        putInt(KEY, v)
+                        if (habitName != null) putString(KEY_HABIT, habitName)
+                    }
+                    .apply()
             }
 
             fun load(context: Context): Float? {
@@ -106,6 +111,11 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                     .getInt(KEY, -1)
                 return if (v < 0) null else (v / 1000f).coerceIn(0f, 1f)
             }
+
+            /** Last-known water habit the glass represents (null = none). */
+            fun loadHabitName(context: Context): String? =
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .getString(KEY_HABIT, null)
         }
 
         /**
@@ -126,6 +136,7 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             var avg30 = 0.0
             var habitScreenCount = 0
             var waterLevel: Float? = null
+            var waterHabitName: String? = null
             try {
                 val settings = SettingsRepository(appContext).settingsFlow.first()
                 habitScreenCount = settings.habitScreens.size
@@ -138,6 +149,11 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                         // Water glass level (1 = full morning glass, 0 = goal
                         // met, null = no water-type habit configured).
                         waterLevel = WaterGlass.levelFor(
+                            db, settings.waterHabits, settings.waterDailyGoals
+                        )
+                        // The habit the glass represents — the tap zone's
+                        // deep link targets this habit's grid square.
+                        waterHabitName = WaterGlass.primaryHabitName(
                             db, settings.waterHabits, settings.waterDailyGoals
                         )
                         val stats = computeTaskerStats(
@@ -165,8 +181,9 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 dayPoints = today
             )
             TierStateStore.save(appContext, tiers)
-            // Persist the water level for the synchronous rebind path.
-            WaterLevelStore.save(appContext, waterLevel)
+            // Persist the water level + habit name for the synchronous
+            // rebind path.
+            WaterLevelStore.save(appContext, waterLevel, waterHabitName)
 
             // Guest figures — hash-gated provider pull (no-op when unchanged).
             // Overwrites the per-app entry: old art can never resurface.
@@ -236,6 +253,10 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            // Water glass level: resolved BEFORE the views are built so the
+            // tap zone below can be bound from it (async refresh override,
+            // else last persisted).
+            val waterLevelFinal = waterLevelOverride ?: WaterLevelStore.load(appContext)
             val layoutId = if (layoutFlip.getAndSet(!layoutFlip.get())) {
                 R.layout.widget_scene_combined_b
             } else {
@@ -247,6 +268,21 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 setOnClickPendingIntent(
                     R.id.scene_habit_zones, openTailPendingIntent(appContext)
                 )
+                // Water-glass tap zone: visible only while the glass is
+                // drawn (a water-type habit with a valid goal exists). The
+                // tap deep-links into the grid with THAT habit's input
+                // dialog open — as if its square had been tapped. Falls
+                // back to a plain grid open when the persisted habit name
+                // isn't known yet (first-ever refresh hasn't landed).
+                if (waterLevelFinal != null) {
+                    setViewVisibility(R.id.scene_water_zone, android.view.View.VISIBLE)
+                    setOnClickPendingIntent(
+                        R.id.scene_water_zone,
+                        waterGlassPendingIntent(appContext)
+                    )
+                } else {
+                    setViewVisibility(R.id.scene_water_zone, android.view.View.GONE)
+                }
                 // Notification badge.
                 if (notifCount > 0) {
                     setViewVisibility(R.id.scene_notif, android.view.View.VISIBLE)
@@ -310,8 +346,9 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 }
             }
 
-            // Water glass level: async refresh override, else last persisted.
-            val waterLevel = waterLevelOverride ?: WaterLevelStore.load(appContext)
+            // Water glass level: resolved above (before the views build),
+            // reused for the scene bitmap below.
+            val waterLevel = waterLevelFinal
 
             // Kenga's confidence (last-known zones count, no provider query):
             // ≥4 colored areas today -> he renders in front of the lizard.
@@ -392,6 +429,30 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             }
             return PendingIntent.getActivity(
                 context, 4243, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
+        /**
+         * Water-glass tap zone: deep-links into the grid with the water
+         * habit's square auto-tapped (input dialog open). The habit NAME is
+         * read from [WaterLevelStore] at PendingIntent CREATION time (the
+         * RemoteViews path can't defer reads), and FLAG_UPDATE_CURRENT
+         * refreshes the extra on every widget rebind — it always matches
+         * the glass being drawn.
+         */
+        private fun waterGlassPendingIntent(context: Context): PendingIntent {
+            val habitName = WaterLevelStore.loadHabitName(context)
+            val intent = Intent(context, MainActivity::class.java).apply {
+                action = "com.example.tail.SCENE.WATER"
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                putExtra(MainActivity.EXTRA_OPEN_ROUTE, "grid")
+                if (!habitName.isNullOrBlank()) {
+                    putExtra(MainActivity.EXTRA_OPEN_HABIT, habitName)
+                }
+            }
+            return PendingIntent.getActivity(
+                context, 4244, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
         }

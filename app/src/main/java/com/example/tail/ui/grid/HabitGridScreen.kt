@@ -238,6 +238,7 @@ import com.example.tail.ui.viewmodel.getDailyTotals
 import com.example.tail.ui.viewmodel.getDeleteDataDayCount
 import com.example.tail.ui.viewmodel.getEarliestLocationDate
 import com.example.tail.ui.viewmodel.getMinutesTodayCount
+import com.example.tail.ui.viewmodel.getTrueValueToday
 import com.example.tail.ui.viewmodel.isMinutesPrimaryHabit
 import com.example.tail.ui.viewmodel.setComboHabitEndMode
 import com.example.tail.ui.viewmodel.submitComboHabit
@@ -1140,6 +1141,199 @@ fun HabitGridScreen(
     var quickEditWasTimeless by remember { mutableStateOf(false) }
     val toastScope = rememberCoroutineScope()
 
+    // ── Habit square tap dispatch ────────────────────────────────────────
+    // THE single source of truth for what a tap on a grid square does
+    // (type-specific input dialogs, app links, plain increments). Extracted
+    // from the HabitGrid call site (kept that composable under the JVM
+    // 64KB method limit too) so the water-glass deep link below can replay
+    // the EXACT same behaviour as a physical tap on the square.
+    val handleHabitTap: (Habit, Int) -> Unit = { habit, index ->
+        when {
+            // Combo-input TYPE habit: the tap opens the combo batch-input
+            // popup instead of an increment — the habit itself is untracked.
+            !editMode && habit.name in settings.comboInputHabits -> {
+                comboDialogHabit = habit.name
+            }
+            isAppLink(habit.name) -> {
+                if (editMode) {
+                    viewModel.selectEditHabit(index)
+                    revealCellIndex = index
+                    revealNonce++
+                } else {
+                    // Launch the linked app
+                    appLinkPackageName(habit.name)?.let { pkg ->
+                        val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
+                        if (launchIntent != null) {
+                            context.startActivity(launchIntent)
+                        }
+                    }
+                }
+            }
+            graphMode -> {
+                viewModel.toggleGraphHabitSelection(habit.name)
+                // The graph panel grows when the first habit is selected —
+                // reveal the tapped cell if it gets pushed out of the
+                // shrunken grid.
+                revealCellIndex = index
+                revealNonce++
+            }
+            editMode -> {
+                viewModel.selectEditHabit(index)
+                revealCellIndex = index
+                revealNonce++
+            }
+            // Habit Timer feature: the tap starts the floating bubble timer
+            // (with the habit's icon) INSTEAD of the normal behaviour — the
+            // increment/input happens when the bubble is tapped to end the
+            // session.
+            isToday && habit.name in settings.habitTimerHabits -> {
+                if (android.provider.Settings.canDrawOverlays(context)) {
+                    com.example.tail.widget.startHabitTimerBubble(context, habit.name)
+                } else {
+                    android.widget.Toast.makeText(
+                        context,
+                        "Habit Timer needs the \"Display over other apps\" permission",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+            habit.name in settings.mealHabits -> {
+                // Meal tap just opens the input screen — no card and no
+                // increment yet. The meal is created (and the habit
+                // incremented) only when content is actually committed:
+                // parsed text, quick log, or quick capture (photo/voice).
+                mealDialogHabit = habit.name
+            }
+            habit.name in settings.sleepHabits -> {
+                if (!openSleepDialog(sleepDialogState, viewModel, habit, selectedDate)) {
+                    viewModel.selectEditHabit(index)
+                    revealCellIndex = index
+                    revealNonce++
+                }
+            }
+            habit.name in settings.subtypedHabits -> {
+                viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
+                    subtypeDialogBreakdown = breakdown
+                    subtypeDialogHabit = habit
+                }
+            }
+            // Soreness nightly type (convention: habit named "Soreness"):
+            // tapping opens the 0–3 per-region rating dialog ("Nothing
+            // sore" = explicit zero row).
+            isSorenessHabit(habit.name) -> {
+                viewModel.loadSorenessDay(selectedDate) { row ->
+                    sorenessDialogDay = row
+                    sorenessDialogOpen = true
+                }
+            }
+            // Injury (episode) type: tapping opens the episode dialog — NEW
+            // episode when none is open, "Update episode" (severity/note/
+            // resolve) while one is. "Sick" is always an episode habit
+            // (convention).
+            habit.name in settings.episodeHabits ||
+                habit.name.equals("Sick", ignoreCase = true) -> {
+                viewModel.loadEpisodes(habit.name) { episodes ->
+                    episodeDialogEpisodes = episodes
+                    episodeDialogHabit = habit
+                }
+            }
+            // Pill-log type (count-coded dosing): tapping opens the pill
+            // dialog — one line = one serving.
+            habit.name in settings.pillLogHabits -> {
+                viewModel.loadPillDay(habit.name, selectedDate) { pillDialogToday = it }
+                viewModel.loadPillOptions(habit.name) { pills, catalog ->
+                    pillDialogCatalogPills = pills
+                    pillDialogCatalog = catalog
+                }
+                viewModel.loadPillSuggestions(habit.name) { pillDialogSuggestions = it }
+                pillDialogHabit = habit
+            }
+            // Blood-test type: tapping opens the lab-item dialog (manual
+            // form + AI text parsing).
+            habit.name in settings.bloodTestHabits -> {
+                bloodTestDialogData = null
+                viewModel.loadBloodTestDialogData(habit.name, selectedDate) {
+                    bloodTestDialogData = it
+                }
+                bloodTestDialogHabit = habit
+            }
+            habit.name in settings.weightsHabits -> weightsDialogHabit = habit
+            habit.name in settings.textInputHabits -> {
+                openTextInputDialog(
+                    setState = { textInputDialogState = it },
+                    getState = { textInputDialogState },
+                    viewModel = viewModel,
+                    habit = habit,
+                    selectedDate = selectedDate,
+                    showOpts = habit.name in settings.textInputOptionsHabits,
+                    isMovieLinked = habit.name in settings.bridgeMovieHabits &&
+                        settings.bridgeEnabled
+                )
+            }
+            habit.useCustomInput -> dialogHabit = habit
+            else -> handlePlainIncrementTap(
+                viewModel = viewModel,
+                habit = habit,
+                context = context,
+                isToday = isToday,
+                selectedDate = selectedDate,
+                settings = settings,
+                lizardShimmerGen = lizardShimmerGen,
+                toastScope = toastScope,
+                onShowRollForward = { rollForwardDialogState = it },
+                onShowIncrementToast = { habitName, isTimeless ->
+                    incrementToastVersion++
+                    incrementToastHabit = habitName
+                    incrementToastIsTimeless = isTimeless
+                    incrementToastOriginalTime = when {
+                        !isToday -> ""
+                        habitName in settings.timelessHabits ->
+                            com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+                        else -> com.example.tail.data.HabitTimestampRepository.nowTime()
+                    }
+                    val currentVersion = incrementToastVersion
+                    toastScope.launch {
+                        delay(3500)
+                        if (incrementToastVersion == currentVersion) {
+                            incrementToastHabit = null
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    // Deep link (combined-scene widget's water glass): a habit NAME to open
+    // exactly as if its grid square had been tapped. Deferred until the
+    // habit is present on the displayed list — switching to its screen
+    // reloads the list, which re-triggers this effect — then it replays the
+    // shared square-tap dispatch above (type-correct input dialog, or a
+    // plain increment for plain habits).
+    androidx.compose.runtime.LaunchedEffect(deepLink.habitName, habitScreens, habits) {
+        val name = deepLink.habitName ?: return@LaunchedEffect
+        // Still loading (cold start): wait for screens/habits to arrive.
+        if (habitScreens.isEmpty() && habits.isEmpty()) return@LaunchedEffect
+        val target = habits.firstOrNull { it.name == name }
+        if (target != null) {
+            deepLink.habitName = null
+            handleHabitTap(target, habits.indexOf(target))
+            return@LaunchedEffect
+        }
+        val screenIdx = habitScreens.indexOfFirst { name in it.habitNames }
+        when {
+            // Habit lives on another screen: switch there — the habit-list
+            // reload re-triggers this effect with the target present.
+            screenIdx >= 0 && screenIdx != activeScreenIndex ->
+                viewModel.switchScreen(screenIdx)
+            // Same screen but the list hasn't settled yet: wait for the reload.
+            screenIdx >= 0 -> Unit
+            // Data loaded and the habit isn't placed anywhere (renamed or
+            // deleted since the widget last refreshed): drop the stale
+            // request so it can't fire later unexpectedly.
+            else -> deepLink.habitName = null
+        }
+    }
+
     // Movie confirmation flash state — asks "did you watch X?" once per
     // desktop-detected movie when the app is opened (movie bridge feature).
     var moviePromptChecked by remember { mutableStateOf(false) }
@@ -1837,164 +2031,7 @@ fun HabitGridScreen(
                         chessComHabitLinks = settings.chessComHabitLinks,
                         habitLongPressActions = settings.habitLongPressActions,
                         habitLongPressUrls = settings.habitLongPressUrls,
-                        onHabitClick = { habit, index ->
-                            when {
-                                // Combo-input TYPE habit: the tap opens the
-                                // combo batch-input popup instead of an
-                                // increment — the habit itself is untracked.
-                                !editMode && habit.name in settings.comboInputHabits -> {
-                                    comboDialogHabit = habit.name
-                                }
-                                isAppLink(habit.name) -> {
-                                    if (editMode) {
-                                        viewModel.selectEditHabit(index)
-                                        revealCellIndex = index
-                                        revealNonce++
-                                    } else {
-                                        // Launch the linked app
-                                        appLinkPackageName(habit.name)?.let { pkg ->
-                                            val launchIntent = context.packageManager.getLaunchIntentForPackage(pkg)
-                                            if (launchIntent != null) {
-                                                context.startActivity(launchIntent)
-                                            }
-                                        }
-                                    }
-                                }
-                                graphMode -> {
-                                    viewModel.toggleGraphHabitSelection(habit.name)
-                                    // The graph panel grows when the first habit is
-                                    // selected — reveal the tapped cell if it gets
-                                    // pushed out of the shrunken grid.
-                                    revealCellIndex = index
-                                    revealNonce++
-                                }
-                                editMode -> {
-                                    viewModel.selectEditHabit(index)
-                                    revealCellIndex = index
-                                    revealNonce++
-                                }
-                                // Habit Timer feature: the tap starts the
-                                // floating bubble timer (with the habit's
-                                // icon) INSTEAD of the normal behaviour —
-                                // the increment/input happens when the bubble
-                                // is tapped to end the session.
-                                isToday && habit.name in settings.habitTimerHabits -> {
-                                    if (android.provider.Settings.canDrawOverlays(context)) {
-                                        com.example.tail.widget.startHabitTimerBubble(context, habit.name)
-                                    } else {
-                                        android.widget.Toast.makeText(
-                                            context,
-                                            "Habit Timer needs the \"Display over other apps\" permission",
-                                            android.widget.Toast.LENGTH_LONG
-                                        ).show()
-                                    }
-                                }
-                                habit.name in settings.mealHabits -> {
-                                    // Meal tap just opens the input screen — no card
-                                    // and no increment yet. The meal is created (and
-                                    // the habit incremented) only when content is
-                                    // actually committed: parsed text, quick log, or
-                                    // quick capture (photo/voice).
-                                    mealDialogHabit = habit.name
-                                }
-                                habit.name in settings.sleepHabits -> {
-                                    if (!openSleepDialog(sleepDialogState, viewModel, habit, selectedDate)) {
-                                        viewModel.selectEditHabit(index)
-                                        revealCellIndex = index
-                                        revealNonce++
-                                    }
-                                }
-                                habit.name in settings.subtypedHabits -> {
-                                    viewModel.loadSubtypeBreakdown(habit.name) { breakdown ->
-                                        subtypeDialogBreakdown = breakdown
-                                        subtypeDialogHabit = habit
-                                    }
-                                }
-                                // Soreness nightly type (convention: habit named
-                                // "Soreness"): tapping opens the 0–3 per-region
-                                // rating dialog ("Nothing sore" = explicit zero row).
-                                isSorenessHabit(habit.name) -> {
-                                    viewModel.loadSorenessDay(selectedDate) { row ->
-                                        sorenessDialogDay = row
-                                        sorenessDialogOpen = true
-                                    }
-                                }
-                                // Injury (episode) type: tapping opens the episode
-                                // dialog — NEW episode when none is open, "Update
-                                // episode" (severity/note/resolve) while one is.
-                                // "Sick" is always an episode habit (convention).
-                                habit.name in settings.episodeHabits ||
-                                    habit.name.equals("Sick", ignoreCase = true) -> {
-                                    viewModel.loadEpisodes(habit.name) { episodes ->
-                                        episodeDialogEpisodes = episodes
-                                        episodeDialogHabit = habit
-                                    }
-                                }
-                                // Pill-log type (count-coded dosing): tapping opens
-                                // the pill dialog — one line = one serving.
-                                habit.name in settings.pillLogHabits -> {
-                                    viewModel.loadPillDay(habit.name, selectedDate) { pillDialogToday = it }
-                                    viewModel.loadPillOptions(habit.name) { pills, catalog ->
-                                        pillDialogCatalogPills = pills
-                                        pillDialogCatalog = catalog
-                                    }
-                                    viewModel.loadPillSuggestions(habit.name) { pillDialogSuggestions = it }
-                                    pillDialogHabit = habit
-                                }
-                                // Blood-test type: tapping opens the lab-item
-                                // dialog (manual form + AI text parsing).
-                                habit.name in settings.bloodTestHabits -> {
-                                    bloodTestDialogData = null
-                                    viewModel.loadBloodTestDialogData(habit.name, selectedDate) {
-                                        bloodTestDialogData = it
-                                    }
-                                    bloodTestDialogHabit = habit
-                                }
-                                habit.name in settings.weightsHabits -> weightsDialogHabit = habit
-                                habit.name in settings.textInputHabits -> {
-                                    openTextInputDialog(
-                                        setState = { textInputDialogState = it },
-                                        getState = { textInputDialogState },
-                                        viewModel = viewModel,
-                                        habit = habit,
-                                        selectedDate = selectedDate,
-                                        showOpts = habit.name in settings.textInputOptionsHabits,
-                                        isMovieLinked = habit.name in settings.bridgeMovieHabits &&
-                                            settings.bridgeEnabled
-                                    )
-                                }
-                                habit.useCustomInput -> dialogHabit = habit
-                                else -> handlePlainIncrementTap(
-                                    viewModel = viewModel,
-                                    habit = habit,
-                                    context = context,
-                                    isToday = isToday,
-                                    selectedDate = selectedDate,
-                                    settings = settings,
-                                    lizardShimmerGen = lizardShimmerGen,
-                                    toastScope = toastScope,
-                                    onShowRollForward = { rollForwardDialogState = it },
-                                    onShowIncrementToast = { habitName, isTimeless ->
-                                        incrementToastVersion++
-                                        incrementToastHabit = habitName
-                                        incrementToastIsTimeless = isTimeless
-                                        incrementToastOriginalTime = when {
-                                            !isToday -> ""
-                                            habitName in settings.timelessHabits ->
-                                                com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
-                                            else -> com.example.tail.data.HabitTimestampRepository.nowTime()
-                                        }
-                                        val currentVersion = incrementToastVersion
-                                        toastScope.launch {
-                                            delay(3500)
-                                            if (incrementToastVersion == currentVersion) {
-                                                incrementToastHabit = null
-                                            }
-                                        }
-                                    }
-                                )
-                            }
-                        },
+                        onHabitClick = handleHabitTap,
                         onHabitLongClick = { habit ->
                             if (!editMode && !graphMode && !isAppLink(habit.name)) {
                                 // URL configured for the LONG_PRESS_URL action (null/blank = not set)
@@ -3076,6 +3113,11 @@ fun HabitGridScreen(
         // Minutes-primary habits: the entered number is MINUTES (routed to
         // the first-class minutes slot by incrementCustomAmount), not points.
         val isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habit.name)
+        // True-value companion line: show the raw measurement (e.g. ml for
+        // water habits) whenever it is a separate scale from the points.
+        val isWater = habit.name in settings.waterHabits
+        val trueValue = if (isMinutesPrimary) null
+            else viewModel.getTrueValueToday(habit.name)
         IncrementDialog(
             habitName = habit.name,
             currentCount = if (isMinutesPrimary)
@@ -3083,6 +3125,8 @@ fun HabitGridScreen(
             quickAmounts = customAmounts,
             recentAmounts = recentAmounts,
             unitLabel = if (isMinutesPrimary) "minutes" else null,
+            currentTrueValue = trueValue,
+            trueValueUnit = if (isWater) "ml" else null,
             onConfirm = { amount ->
                 // Increment FIRST, then the record check — the engine reads
                 // the post-write day total so the new amount is part of the

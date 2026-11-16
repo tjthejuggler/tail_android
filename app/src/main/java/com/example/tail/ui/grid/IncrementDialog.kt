@@ -44,6 +44,13 @@ fun IncrementDialog(
      *  e.g. "minutes" for minutes-primary habits. Drives the field label
      *  ("Amount (minutes)") and the Today line ("Today: 45 min"). */
     unitLabel: String? = null,
+    /** Today's TRUE VALUE (the raw measurement the points are derived
+     *  from, e.g. millilitres drunk), when it is tracked separately from
+     *  the points count. Shown as a companion line under "Today" so both
+     *  scales are visible at a glance. */
+    currentTrueValue: Int? = null,
+    /** Unit suffix for the true-value line (e.g. "ml"); null = none. */
+    trueValueUnit: String? = null,
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -60,6 +67,16 @@ fun IncrementDialog(
                     else "Today: $currentCount",
                     fontSize = 14.sp
                 )
+                // True value companion line (only when the raw measurement
+                // is a separate scale from the points shown above).
+                if (currentTrueValue != null && currentTrueValue != currentCount) {
+                    Text(
+                        text = "True value: $currentTrueValue" +
+                            (trueValueUnit?.let { " $it" } ?: ""),
+                        fontSize = 12.sp,
+                        color = Color(0xFF999999)
+                    )
+                }
                 Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(

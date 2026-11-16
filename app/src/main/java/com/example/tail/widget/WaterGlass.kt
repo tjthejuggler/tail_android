@@ -108,6 +108,36 @@ object WaterGlass {
     }
 
     /**
+     * The water habit the glass currently REPRESENTS — the one whose
+     * clamped level is the lowest (mirrors [levelFor]'s selection) — or
+     * null when no water habit with a valid goal is configured. The
+     * combined-scene widget binds its glass tap zone to this habit, so a
+     * tap opens the same habit the draining level is drawn from.
+     */
+    fun primaryHabitName(
+        db: Map<String, Map<String, Int>>,
+        waterHabits: Set<String>,
+        waterDailyGoals: Map<String, Int>,
+        today: LocalDate = LocalDate.now()
+    ): String? {
+        if (waterHabits.isEmpty()) return null
+        val todayStr = today.toString()
+        var bestName: String? = null
+        var bestLevel: Float? = null
+        for (name in waterHabits) {
+            val goal = (waterDailyGoals[name] ?: com.example.tail.data.DEFAULT_WATER_DAILY_GOAL)
+            if (goal <= 0) continue
+            val intake = db[name]?.get(todayStr) ?: 0
+            val level = (1f - intake.toFloat() / goal.toFloat()).coerceIn(0f, 1f)
+            if (bestLevel == null || level < bestLevel) {
+                bestLevel = level
+                bestName = name
+            }
+        }
+        return bestName
+    }
+
+    /**
      * Draws the depletion glass at the scene's LEFT edge, bottom-anchored
      * like the guest figures. [level] 1.0 = brimful, 0.0 = empty.
      * Returns without drawing when [level] is null (no water habit).

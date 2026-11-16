@@ -32,6 +32,19 @@
         android:layout_height="match_parent"
         android:orientation="horizontal">
 
+        <!-- Water-glass tap zone: invisible strip over the LEFT edge where
+             the depletion glass renders (glass floor ≈ 0.38·height ≈ this
+             weight of the row). Only active when a water-type habit is
+             configured — the provider hides it otherwise. Tapping it
+             deep-links into the habit grid with the water habit's input
+             dialog open, as if its square had been tapped. -->
+        <TextView
+            android:id="@+id/scene_water_zone"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="0.7"
+            android:contentDescription="Log water" />
+
         <!-- Habit-screen zones (settings-configured, tier-bar parity). -->
         <LinearLayout
             android:id="@+id/scene_habit_zones"
