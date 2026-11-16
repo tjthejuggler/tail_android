@@ -90,7 +90,10 @@ private val tightTextStyle = TextStyle(
 /**
  * Tiny corner badge identifying a special (integration-linked) habit.
  */
-enum class HabitSpecialBadge { MOVIE, MEAL, GARMIN, CHESS, WEIGHTS, SLEEP, PILL, INJURY, SICK }
+enum class HabitSpecialBadge {
+    MOVIE, MEAL, GARMIN, CHESS, WEIGHTS, SLEEP, PILL, INJURY, SICK,
+    WATER, BLOOD, MEDIA, ENVIRONMENT, PHONE, GITHUB
+}
 
 /**
  * A single habit cell in the 8×10 grid.
@@ -490,6 +493,12 @@ fun HabitButton(
                     fontWeight = FontWeight.Bold,
                     style = tightTextStyle
                 )
+                HabitSpecialBadge.WATER -> Text(text = "💧", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.BLOOD -> Text(text = "🩸", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.MEDIA -> Text(text = "🎧", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.ENVIRONMENT -> Text(text = "🌍", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.PHONE -> Text(text = "📱", fontSize = 9.sp, style = tightTextStyle)
+                HabitSpecialBadge.GITHUB -> Text(text = "🐙", fontSize = 9.sp, style = tightTextStyle)
                 null -> {}
             }
             // Combo-input launcher marker: small ⚡ beneath the badge stack

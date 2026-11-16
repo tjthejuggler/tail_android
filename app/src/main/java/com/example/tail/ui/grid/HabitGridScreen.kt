@@ -184,6 +184,7 @@ import com.example.tail.data.findShortcutInfo
 import com.example.tail.ui.viewmodel.buildHabitSuggestions
 import com.example.tail.ui.viewmodel.setSuggestionExcluded
 import com.example.tail.ui.viewmodel.incrementHabit
+import com.example.tail.ui.viewmodel.incrementCustomAmount
 import com.example.tail.ui.viewmodel.loadBloodTestDialogData
 import com.example.tail.ui.viewmodel.readBloodTestDocuments
 import com.example.tail.ui.viewmodel.parseBloodTestWithAi
@@ -1128,8 +1129,11 @@ fun HabitGridScreen(
     var incrementToastHabit by remember { mutableStateOf<String?>(null) }
     var incrementToastOriginalTime by remember { mutableStateOf("") }
     var incrementToastIsTimeless by remember { mutableStateOf(false) }
-    // Version counter to prevent stale auto-dismiss from clearing a newer toast
-    var incrementToastVersion by remember { mutableIntStateOf(0) }
+    // Version counter to prevent stale auto-dismiss from clearing a newer toast.
+    // The raw state object is kept so [scheduleIncrementToast] (shared by the
+    // popup confirm paths) can read/bump it across recompositions.
+    val incrementToastVersionState = remember { mutableIntStateOf(0) }
+    var incrementToastVersion by incrementToastVersionState
     // Quick timestamp editor dialog state
     var quickEditHabitName by remember { mutableStateOf<String?>(null) }
     var quickEditOriginalTime by remember { mutableStateOf("") }
@@ -1819,6 +1823,15 @@ fun HabitGridScreen(
                         pillLogHabits = settings.pillLogHabits,
                         episodeHabits = settings.episodeHabits,
                         sickEpisodeHabits = settings.sickEpisodeHabits,
+                        waterHabits = settings.waterHabits,
+                        bloodTestHabits = settings.bloodTestHabits,
+                        mediaHabits = settings.mediaHabits,
+                        environmentHabitMetrics = if (settings.environmentEnabled)
+                            settings.environmentHabitMetrics else emptyMap(),
+                        phoneUsageHabitMetrics = if (settings.phoneUsageEnabled)
+                            settings.phoneUsageHabitMetrics else emptyMap(),
+                        githubRepoUrls = if (settings.githubEnabled)
+                            settings.githubRepoUrls else emptyMap(),
                         comboInputHabits = settings.comboInputHabits,
                         bridgeMovieHabits = if (settings.bridgeEnabled) settings.bridgeMovieHabits else emptySet(),
                         chessComHabitLinks = settings.chessComHabitLinks,
@@ -3060,16 +3073,21 @@ fun HabitGridScreen(
         val customAmounts = settings.customInputAmounts[habit.name]
             ?: com.example.tail.data.DEFAULT_CUSTOM_INPUT_AMOUNTS
         val recentAmounts = settings.customInputRecentAmounts[habit.name] ?: emptyList()
+        // Minutes-primary habits: the entered number is MINUTES (routed to
+        // the first-class minutes slot by incrementCustomAmount), not points.
+        val isMinutesPrimary = viewModel.isMinutesPrimaryHabit(habit.name)
         IncrementDialog(
             habitName = habit.name,
-            currentCount = habit.todayCount,
+            currentCount = if (isMinutesPrimary)
+                viewModel.getMinutesTodayCount(habit.name) else habit.todayCount,
             quickAmounts = customAmounts,
             recentAmounts = recentAmounts,
+            unitLabel = if (isMinutesPrimary) "minutes" else null,
             onConfirm = { amount ->
                 // Increment FIRST, then the record check — the engine reads
                 // the post-write day total so the new amount is part of the
                 // judged day (day-total record semantics).
-                viewModel.incrementHabit(habit.name, amount, recordTimestamp = isToday)
+                viewModel.incrementCustomAmount(habit.name, amount, recordTimestamp = isToday)
                 viewModel.checkRecordNotificationTotal(habit.name, amount)
                 viewModel.recordRecentIncrementAmount(habit.name, amount)
                 dialogHabit = null
@@ -3116,6 +3134,18 @@ fun HabitGridScreen(
             displayLabels = settings.valueDisplayLabels[habit.name] ?: emptyMap(),
             viewModel = viewModel,
             lizardShimmerGen = lizardShimmerGen,
+            onShowToast = {
+                scheduleIncrementToast(
+                    habitName = habit.name,
+                    isToday = isToday,
+                    settings = settings,
+                    version = incrementToastVersionState,
+                    setHabit = { incrementToastHabit = it },
+                    setTimeless = { incrementToastIsTimeless = it },
+                    setOriginalTime = { incrementToastOriginalTime = it },
+                    scope = toastScope
+                )
+            },
             onDismiss = { subtypeDialogHabit = null }
         )
     }
@@ -3139,6 +3169,20 @@ fun HabitGridScreen(
                         habit.name, entryDate, null, source, rawText, items, note
                     )
                     bloodTestDialogHabit = null
+                    // Popup-gated increment: show the increment toast (Edit
+                    // Time / Timeless) for the entry's stamp, like a manual
+                    // increment. The entry's own time (if picked) is the
+                    // recorded stamp; otherwise "now".
+                    scheduleIncrementToast(
+                        habitName = habit.name,
+                        isToday = entryDate == today,
+                        settings = settings,
+                        version = incrementToastVersionState,
+                        setHabit = { incrementToastHabit = it },
+                        setTimeless = { incrementToastIsTimeless = it },
+                        setOriginalTime = { incrementToastOriginalTime = it },
+                        scope = toastScope
+                    )
                 },
                 onDismiss = { bloodTestDialogHabit = null }
             )
@@ -3176,6 +3220,19 @@ fun HabitGridScreen(
             onConfirm = { lines ->
                 viewModel.savePillLines(habit.name, selectedDate, lines)
                 pillDialogHabit = null
+                // Popup-gated increment: the pill dialog was submitted — show
+                // the increment toast (Edit Time / Timeless) for the dose's
+                // shared timestamp, same as the plain-tap path.
+                scheduleIncrementToast(
+                    habitName = habit.name,
+                    isToday = isToday,
+                    settings = settings,
+                    version = incrementToastVersionState,
+                    setHabit = { incrementToastHabit = it },
+                    setTimeless = { incrementToastIsTimeless = it },
+                    setOriginalTime = { incrementToastOriginalTime = it },
+                    scope = toastScope
+                )
             },
             onDismiss = { pillDialogHabit = null }
         )
@@ -3227,6 +3284,18 @@ fun HabitGridScreen(
             settings = settings,
             viewModel = viewModel,
             lizardShimmerGen = lizardShimmerGen,
+            onShowToast = {
+                scheduleIncrementToast(
+                    habitName = habit.name,
+                    isToday = isToday,
+                    settings = settings,
+                    version = incrementToastVersionState,
+                    setHabit = { incrementToastHabit = it },
+                    setTimeless = { incrementToastIsTimeless = it },
+                    setOriginalTime = { incrementToastOriginalTime = it },
+                    scope = toastScope
+                )
+            },
             onDismiss = { weightsDialogHabit = null }
         )
     }
@@ -4416,6 +4485,18 @@ internal fun HabitGrid(
     episodeHabits: Set<String> = emptySet(),
     /** Illness-episode habits (Sick variant, 🤒 corner badge). */
     sickEpisodeHabits: Set<String> = emptySet(),
+    /** Water-type habits (daily ml goal, 💧 corner badge). */
+    waterHabits: Set<String> = emptySet(),
+    /** Blood-test habits (lab-item dialog on tap, 🩸 corner badge). */
+    bloodTestHabits: Set<String> = emptySet(),
+    /** Media-tracking habits (🎧 corner badge). */
+    mediaHabits: Set<String> = emptySet(),
+    /** Environment-linked habits (🌍 corner badge). */
+    environmentHabitMetrics: Map<String, String> = emptyMap(),
+    /** Phone-usage habits (📱 corner badge). */
+    phoneUsageHabitMetrics: Map<String, String> = emptyMap(),
+    /** GitHub-linked habits (🐙 corner badge). */
+    githubRepoUrls: Map<String, String> = emptyMap(),
     /** Habits marked as the "⚡ Combo input" type (batch-input launchers). */
     comboInputHabits: Set<String> = emptySet(),
     /** Movie-bridge-linked habits (auto-filled from the tail_bridge watcher). */
@@ -4536,6 +4617,12 @@ internal fun HabitGrid(
                         habit.name in pillLogHabits -> HabitSpecialBadge.PILL
                         isSickHabit -> HabitSpecialBadge.SICK
                         habit.name in episodeHabits -> HabitSpecialBadge.INJURY
+                        habit.name in waterHabits -> HabitSpecialBadge.WATER
+                        habit.name in bloodTestHabits -> HabitSpecialBadge.BLOOD
+                        habit.name in mediaHabits -> HabitSpecialBadge.MEDIA
+                        habit.name in environmentHabitMetrics -> HabitSpecialBadge.ENVIRONMENT
+                        habit.name in phoneUsageHabitMetrics -> HabitSpecialBadge.PHONE
+                        habit.name in githubRepoUrls -> HabitSpecialBadge.GITHUB
                         else -> null
                     }
                     HabitButton(

@@ -40,6 +40,10 @@ fun IncrementDialog(
     currentCount: Int,
     quickAmounts: List<Int> = DEFAULT_CUSTOM_INPUT_AMOUNTS,
     recentAmounts: List<Int> = emptyList(),
+    /** Non-null when the entered amount means something other than points —
+     *  e.g. "minutes" for minutes-primary habits. Drives the field label
+     *  ("Amount (minutes)") and the Today line ("Today: 45 min"). */
+    unitLabel: String? = null,
     onConfirm: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -51,13 +55,17 @@ fun IncrementDialog(
         title = { Text(text = habitName, fontSize = 16.sp) },
         text = {
             Column {
-                Text(text = "Today: $currentCount", fontSize = 14.sp)
+                Text(
+                    text = if (unitLabel != null) "Today: $currentCount $unitLabel"
+                    else "Today: $currentCount",
+                    fontSize = 14.sp
+                )
                 Spacer(modifier = Modifier.height(8.dp))
 
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it.filter { c -> c.isDigit() } },
-                    label = { Text("Amount") },
+                    label = { Text(if (unitLabel != null) "Amount ($unitLabel)" else "Amount") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()

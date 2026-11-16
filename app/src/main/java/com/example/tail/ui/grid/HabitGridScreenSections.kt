@@ -2623,6 +2623,7 @@ internal fun EditModeControlBar(
                     val isTextInput = selectedHabitName in textInputHabits
                     HabitInputModesSection(
                         selectedHabitName = selectedHabitName,
+                        widgetTimerMinutesPrimary = widgetTimerMinutesPrimary,
                         pillLogHabits = pillLogHabits,
                         habitNotes = habitNotes,
                         onSetHabitNote = onSetHabitNote,
@@ -3344,7 +3345,7 @@ internal fun EditModeControlBar(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column {
-                                    Text(text = "Injury (episode)", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                    Text(text = "🤕 Injury (episode)", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                                     Text(
                                         text = if (isEpisode) "Episodic: log onset, update, resolve"
                                         else "Track injuries as dated episodes",
@@ -3374,7 +3375,7 @@ internal fun EditModeControlBar(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column {
-                                    Text(text = "Sick (illness episode)", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                                    Text(text = "🤒 Sick (illness episode)", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                                     Text(
                                         text = if (isSick) "Episodic: onset, update, clear"
                                         else "Track illness as dated episodes",
@@ -4055,6 +4056,8 @@ internal fun HabitInputModesSection(
     onToggleInvertedBinary: (String) -> Unit = {},
     customInputHabits: Set<String>,
     customInputAmounts: Map<String, List<Int>>,
+    /** Minutes-primary habits — their custom-input popup enters minutes. */
+    widgetTimerMinutesPrimary: Set<String> = emptySet(),
     /** Habits with the "New record" popup enabled (all-time-best amount input). */
     recordNotifHabits: Set<String> = emptySet(),
     /** Called when the user toggles the "New record" popup for a habit. */
@@ -4198,7 +4201,14 @@ internal fun HabitInputModesSection(
         Column {
             Text(text = "Custom input", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Text(
-                text = if (isCustomInput) "Shows number picker on tap" else "Simple +1 on tap",
+                text = when {
+                    // Minutes-primary: the popup's number is minutes (routed
+                    // to the minutes slot), not points.
+                    isCustomInput && selectedHabitName in widgetTimerMinutesPrimary ->
+                        "Number picker on tap enters minutes"
+                    isCustomInput -> "Shows number picker on tap"
+                    else -> "Simple +1 on tap"
+                },
                 color = Color(0xFF888888), fontSize = 10.sp
             )
         }
@@ -4635,7 +4645,7 @@ internal fun PillLogTypeToggleRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column {
-            Text(text = "Pill log", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(text = "💊 Pill log", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Text(
                 text = if (enabled) "One line = one serving, doses auto-computed"
                 else "Count-coded pill dosing",
@@ -4668,7 +4678,7 @@ internal fun BloodTestTypeToggleRow(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column {
-            Text(text = "Blood test", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+            Text(text = "🩸 Blood test", color = Color(0xFFCCCCCC), fontSize = 12.sp)
             Text(
                 text = if (enabled) "Any panel · items via form or AI paste"
                 else "Log any blood test's items; count = items tested",

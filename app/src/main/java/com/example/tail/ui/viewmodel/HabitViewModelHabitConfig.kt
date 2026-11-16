@@ -824,6 +824,89 @@ fun HabitViewModel.toggleCustomInput(habitName: String) {
 }
 
 /**
+ * Custom-input dialog submission. For ordinary habits the entered amount is
+ * the increment on the habit's own count (the previous behaviour).
+ *
+ * MINUTES-PRIMARY habits ([AppSettings.widgetTimerMinutesPrimary] — the
+ * "Primary value: Minutes" setting): the entered amount is MINUTES, not
+ * points. The submission mirrors one manual timer session of N minutes:
+ * +1 on the habit's own count (the session/fallback value, timestamped),
+ * +N on the first-class `minutes:<habit>` slot, and the stamp annotated
+ * with its minutes so the timestamp editor shows "N" for the entry — the
+ * exact layout the bubble timer / combo-input paths persist.
+ */
+fun HabitViewModel.incrementCustomAmount(
+    habitName: String,
+    amount: Int,
+    recordTimestamp: Boolean = true
+) {
+    if (amount <= 0) return
+    if (habitName !in _settings.value.widgetTimerMinutesPrimary) {
+        incrementHabit(habitName, amount, recordTimestamp = recordTimestamp)
+        return
+    }
+
+    val uriString = _settings.value.fileUri
+    if (uriString.isEmpty()) {
+        _errorMessage.value = "No file selected. Please pick a file in Settings."
+        return
+    }
+    val date = _selectedDate.value
+    val dateStr = dateString(date)
+
+    // Minutes-slot write FIRST (the weights-entry pattern): incrementHabit
+    // snapshots cachedPhoneDb and persists that snapshot, so the slot must
+    // already be in it for the single atomic write to carry both.
+    val countBefore = cachedPhoneDb[habitName]?.get(dateStr) ?: 0
+    cachedPhoneDb = habitsRepo.applyIncrementToDb(
+        cachedPhoneDb, minutesKey(habitName), amount, date
+    )
+
+    // One submission = one session of N minutes. A shared stamp time keeps
+    // the timestamp store and the per-timestamp minutes annotation aligned.
+    val stamp = if (recordTimestamp && date == LocalDate.now() &&
+        habitName !in _settings.value.timelessHabits
+    ) {
+        com.example.tail.data.HabitTimestampRepository.nowTime()
+    } else null
+    incrementHabit(
+        habitName, 1,
+        recordTimestamp = recordTimestamp,
+        date = date,
+        stampTime = stamp
+    )
+
+    // incrementHabit early-returns WITHOUT persisting when the session count
+    // cannot change (max-1 already at 1, unchanged point tier) — persist the
+    // minutes slot ourselves in that case so it is not lost.
+    val countAfter = cachedPhoneDb[habitName]?.get(dateStr) ?: 0
+    if (countAfter == countBefore) {
+        viewModelScope.launch {
+            rebuildHabitList()
+            try {
+                habitsRepo.persistDatabase(Uri.parse(uriString), context, cachedPhoneDb)
+                HabitsDataChangedBus.emit()
+            } catch (e: Exception) {
+                _errorMessage.value = "Failed to save minutes for '$habitName': ${e.message}"
+            }
+        }
+    }
+
+    // Annotate the session's stamp with its minutes (timestamp editor shows
+    // per-entry minutes for minutes-primary habits). Skipped when no stamp
+    // was recorded (past-day view / timeless).
+    if (stamp != null) {
+        viewModelScope.launch {
+            try {
+                timestampRepo.addMinutesAtTime(habitName, date, stamp, amount)
+            } catch (e: Exception) {
+                Log.w("CustomInput", "Failed to annotate minutes at time for '$habitName': ${e.message}")
+            }
+        }
+    }
+}
+
+/**
  * Saves a custom list of quick-increment button amounts for [habitName].
  * Pass an empty list to revert to the default amounts.
  */

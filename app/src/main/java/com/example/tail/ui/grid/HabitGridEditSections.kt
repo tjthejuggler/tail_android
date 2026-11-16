@@ -565,7 +565,7 @@ internal fun WaterTypeSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(text = "Water", color = Color(0xFFCCCCCC), fontSize = 12.sp)
+                Text(text = "💧 Water", color = Color(0xFFCCCCCC), fontSize = 12.sp)
                 Text(
                     text = if (enabled) "Daily ml goal — glass drains on scene widget"
                     else "Daily hydration goal (ml)",

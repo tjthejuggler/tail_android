@@ -119,6 +119,10 @@ internal fun SubtypeDialogHost(
     displayLabels: Map<String, String>,
     viewModel: HabitViewModel,
     lizardShimmerGen: androidx.compose.runtime.MutableIntState,
+    /** Shows the increment toast (Edit Time / Timeless) for this habit —
+     *  wired to [scheduleIncrementToast] by the grid screen so the dialog
+     *  submission offers the same time-edit flash as a plain tap. */
+    onShowToast: () -> Unit = {},
     onDismiss: () -> Unit
 ) {
     if (subtypes.isEmpty()) return
@@ -134,6 +138,9 @@ internal fun SubtypeDialogHost(
             // Popup-gated increment: the lizard shimmer fires only
             // now, on subtype dialog submission.
             lizardShimmerGen.intValue++
+            // Same gating for the increment toast — the just-recorded
+            // timestamp(s) become editable right away.
+            onShowToast()
         },
         onDismiss = onDismiss
     )
