@@ -62,12 +62,25 @@ enum class GarminType(val label: String, val description: String) {
             val years = rawValue / 100.0
             String.format("%.2f", years)
         }
+        // NOTE: VO2_MAX is intentionally NOT formatted here — this helper
+        // is also called with habit-DB point values (HabitButton ATH), which
+        // are NOT ×10 metric values. Use [formatVo2Tenths] explicitly where
+        // the value comes from the Garmin monthly cache.
         else -> rawValue.toString()
     }
 
-    companion object {
-        fun fromKey(key: String): GarminType? = entries.find { it.name == key }
-    }
+   /** Formats a ×10 VO2max (475 → "47.5"; whole values print without decimals). */
+   fun formatVo2Tenths(rawValue: Int): String =
+       if (rawValue % 10 == 0) (rawValue / 10).toString()
+       else String.format("%.1f", rawValue / 10.0)
+
+   companion object {
+       fun fromKey(key: String): GarminType? = entries.find { it.name == key }
+
+       /** Values below this are legacy plain-int VO2max entries (pre ×10 storage). */
+       const val VO2_MAX_X10_LEGACY_MAX = 150
+   }
+
 }
 
 /**
@@ -219,6 +232,55 @@ class GarminRepository(private val context: Context) {
     }
 
     /**
+     * Merges the full precise (×10) VO2max history from the proxy's dedicated
+     * endpoint into the monthly caches AND returns it as a VO2_MAX DailyValueMap.
+     *
+     * Precise values WIN over whatever the monthly caches hold (rounded ×10
+     * from the pre-precise era) for every date the endpoint reports. This is
+     * what upgrades historic integer data to decimals without re-fetching
+     * every month: one endpoint call replaces the whole series.
+     */
+    suspend fun refreshVo2PreciseHistory(
+        proxyUrl: String,
+        appToken: String
+    ): Map<GarminType, DailyValueMap> = withContext(Dispatchers.IO) {
+        val series = service.fetchVo2PreciseHistory(proxyUrl, appToken)
+        if (series.isEmpty()) {
+            Log.i(TAG, "refreshVo2PreciseHistory: no data from proxy")
+            return@withContext emptyMap<GarminType, DailyValueMap>()
+        }
+
+        // Bucket by month so we only rewrite months the series touches.
+        val byMonth = mutableMapOf<Pair<Int, Int>, MutableMap<String, Int>>()
+        for ((dateStr, value) in series) {
+            val date = try {
+                LocalDate.parse(dateStr)
+            } catch (e: Exception) {
+                continue
+            }
+            byMonth.getOrPut(date.year to date.monthValue) { mutableMapOf() }[dateStr] = value
+        }
+
+        var monthsWritten = 0
+        for ((yearMonth, monthSeries) in byMonth) {
+            val (year, month) = yearMonth
+            val existing = loadFromCache(year, month) ?: emptyMap()
+            val merged = mutableMapOf<GarminType, MutableMap<String, Int>>()
+            for ((type, dayMap) in existing) {
+                merged[type] = dayMap.toMutableMap()
+            }
+            // Precise value wins for every reported date.
+            merged.getOrPut(GarminType.VO2_MAX) { mutableMapOf() }.putAll(monthSeries)
+            saveToCache(year, month, merged)
+            monthsWritten++
+        }
+        Log.i(TAG, "refreshVo2PreciseHistory: ${series.size} days across " +
+            "$monthsWritten months merged into caches")
+
+        mapOf(GarminType.VO2_MAX to series)
+    }
+
+    /**
      * Fetches all days in a month and processes them into per-day values.
      */
     private suspend fun fetchMonthData(
@@ -265,9 +327,13 @@ class GarminRepository(private val context: Context) {
     ) {
         val date = metrics.date
 
+        // VO2 max is stored ×10 (475 = 47.5) to preserve the one-decimal
+        // precision Garmin's GraphQL gateway reports (vo2MaxPreciseValue).
+        // Falls back to the rounded integer (×10 = whole number) when the
+        // proxy/cache day predates the precise field.
         metrics.vo2Max?.let {
             val dayMap = result.getOrPut(GarminType.VO2_MAX) { mutableMapOf() }
-            dayMap[date] = it.toInt()
+            dayMap[date] = ((metrics.vo2MaxPrecise ?: it) * 10).toInt()
         }
 
         metrics.fitnessAge?.let {
@@ -481,7 +547,18 @@ class GarminRepository(private val context: Context) {
                 val typeJson = json.getJSONObject(typeName)
                 val dayMap = mutableMapOf<String, Int>()
                 for (date in typeJson.keys()) {
-                    dayMap[date] = typeJson.getInt(date)
+                    var value = typeJson.getInt(date)
+                    // VO2 max switched to ×10 storage (475 = 47.5). Caches
+                    // written before that hold plain values (e.g. 48); a
+                    // healthy human VO2max never reaches 15.0 L/kg×10=150,
+                    // so anything below the threshold is legacy and gets
+                    // rescaled in-memory (the merge pass then persists it).
+                    if (type == GarminType.VO2_MAX &&
+                        value in 1 until GarminType.VO2_MAX_X10_LEGACY_MAX
+                    ) {
+                        value *= 10
+                    }
+                    dayMap[date] = value
                 }
                 result[type] = dayMap
             }
@@ -637,7 +714,13 @@ class GarminRepository(private val context: Context) {
                 val dayMap = mutableMapOf<String, Int>()
                 
                 for (date in typeJson.keys()) {
-                    dayMap[date] = typeJson.getInt(date)
+                    var value = typeJson.getInt(date)
+                    // Historic JSON exports predate ×10 VO2max storage —
+                    // rescale plain ints (see loadFromCache note).
+                    if (type == GarminType.VO2_MAX && value in 1 until GarminType.VO2_MAX_X10_LEGACY_MAX) {
+                        value *= 10
+                    }
+                    dayMap[date] = value
                     totalDates++
                 }
                 

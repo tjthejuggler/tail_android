@@ -693,6 +693,8 @@ fun GraphsPanel(
                             } else if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
                                        garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
                                 String.format("%.2f", point.value / 100.0)
+                            } else if (garminType == com.example.tail.data.health.GarminType.VO2_MAX) {
+                                com.example.tail.data.health.GarminType.VO2_MAX.formatVo2Tenths(point.value.toInt())
                             } else if (point.metric == com.example.tail.data.GRAPH_METRIC_IMDB && point.value > 0) {
                                 String.format("%.1f", point.value / 10.0)
                             } else if (point.metric == com.example.tail.data.GRAPH_METRIC_RUNTIME && point.value > 0) {
@@ -1877,8 +1879,8 @@ private fun HabitLineChart(
             textAlign = android.graphics.Paint.Align.RIGHT
         }
 
-        // Check if any series needs decimal formatting (Garmin fitness age,
-        // blood-test item values — both are ×100-scaled)
+        // Check if any series needs decimal formatting (Garmin fitness age and
+        // blood-test values are ×100-scaled; Garmin VO2max is ×10-scaled)
         val needsDecimalFormatting = seriesData.any { series ->
             val garminType = garminHabitLinks[series.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) }
             garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
@@ -1886,6 +1888,13 @@ private fun HabitLineChart(
             (com.example.tail.data.bloodtest.isBloodMetric(series.metric) &&
                 series.metric != com.example.tail.data.bloodtest.BLOOD_METRIC_COUNT)
         }
+        // VO2max series: values are ×10 (475 = 47.5) — format ticks as one
+        // decimal, distinct from the ×100 handling above.
+        val vo2SeriesCount = seriesData.count { series ->
+            garminHabitLinks[series.habitName]?.let { com.example.tail.data.health.GarminType.fromKey(it) } ==
+                com.example.tail.data.health.GarminType.VO2_MAX
+        }
+        val vo2OnlyChart = vo2SeriesCount > 0 && vo2SeriesCount == seriesData.size
 
         if (useMultiScale) {
             // ── Per-series coloured Y-axis labels ──────────────────────────
@@ -1919,6 +1928,10 @@ private fun HabitLineChart(
                     seriesMaxValues[seriesIdx] > 60
                 // Weight series show one decimal (values are ×10-scaled units)
                 val isWeightsWeightSeries = com.example.tail.data.isWeightsWeightMetric(series.metric)
+                // This series' own axis: VO2max values are ×10-scaled.
+                val seriesIsVo2 = garminHabitLinks[series.habitName]
+                    ?.let { com.example.tail.data.health.GarminType.fromKey(it) } ==
+                    com.example.tail.data.health.GarminType.VO2_MAX
                 for (tick in displayTicks) {
                     val y = chartBottom - ((tick - sc.effectiveMin).toFloat() / sc.range) * chartHeight
                     drawLine(
@@ -1932,6 +1945,7 @@ private fun HabitLineChart(
                             String.format("%.2f", tick / 100.0)
                         isWeightsWeightSeries -> com.example.tail.data.formatWeightTenths(tick)
                         useHourLabels -> formatMinutesAsHourMinute(tick)
+                        seriesIsVo2 -> com.example.tail.data.health.GarminType.VO2_MAX.formatVo2Tenths(tick)
                         else -> tick.toString()
                     }
                     val labelX = if (sc.onRight) chartRight + 4.dp.toPx()
@@ -1965,6 +1979,7 @@ private fun HabitLineChart(
                         String.format("%.2f", tick / 100.0)
                     useWeightAxisLabels -> com.example.tail.data.formatWeightTenths(tick)
                     useHourAxisLabels -> formatMinutesAsHourMinute(tick)
+                    vo2OnlyChart -> com.example.tail.data.health.GarminType.VO2_MAX.formatVo2Tenths(tick)
                     else -> tick.toString()
                 }
                 drawContext.canvas.nativeCanvas.drawText(
@@ -2220,6 +2235,8 @@ private fun HabitLineChart(
             } else if (garminType == com.example.tail.data.health.GarminType.FITNESS_AGE ||
                        garminType == com.example.tail.data.health.GarminType.FITNESS_AGE_DISTANCE) {
                 String.format("%.2f", sp.value / 100.0)
+            } else if (garminType == com.example.tail.data.health.GarminType.VO2_MAX) {
+                com.example.tail.data.health.GarminType.VO2_MAX.formatVo2Tenths(sp.value.toInt())
             } else {
                 sp.value.toString()
             }

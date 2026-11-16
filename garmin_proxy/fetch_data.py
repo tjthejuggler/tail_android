@@ -364,6 +364,58 @@ def fetch_fitness_age(client: Garmin, date_str: str) -> Optional[int]:
     return None
 
 
+def fetch_vo2_precise(client: Garmin, start_date: str, end_date: str) -> Dict[str, float]:
+    """Fetch the PRECISE (one-decimal) VO2max history via Garmin's GraphQL
+    gateway — the same request the Connect web VO2max card makes.
+
+    The REST endpoints (maxmet/daily, trainingstatus) only expose the rounded
+    integer (vo2MaxValue); the precise value lives behind
+    ``query{vo2MaxScalar(startDate:..., endDate:...)}`` as
+    ``generic.vo2MaxPreciseValue`` (documented in python-garminconnect's
+    docs/graphql_operations.md). One call covers the whole range, so this is
+    cheaper and more rate-limit-friendly than per-day REST calls.
+
+    Returns {"YYYY-MM-DD": 47.5} keyed by each day's calendarDate. Days
+    without a recorded change are simply absent (Garmin only emits rows when
+    the value changes/reports).
+    """
+    query = (
+        "query{vo2MaxScalar(startDate:\"" + start_date + "\", "
+        "endDate:\"" + end_date + "\")}"
+    )
+    try:
+        resp = client.query_garmin_graphql({"query": query})
+    except Exception as e:
+        logger.warning(f"GraphQL vo2MaxScalar failed: {e}")
+        return {}
+
+    rows = ((resp or {}).get("data") or {}).get("vo2MaxScalar")
+    if isinstance(rows, str):  # some gateways return the scalar as JSON text
+        try:
+            import json as _json
+            rows = _json.loads(rows)
+        except Exception:
+            return {}
+    if not isinstance(rows, list):
+        return {}
+
+    out: Dict[str, float] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        generic = row.get("generic")
+        if not isinstance(generic, dict):
+            continue
+        date = generic.get("calendarDate")
+        value = generic.get("vo2MaxPreciseValue")
+        if isinstance(date, str) and len(date) >= 10 and isinstance(value, (int, float)):
+            out[date[:10]] = float(value)
+    if out:
+        logger.info(f"Precise VO2max for {len(out)} day(s): "
+                    f"{sorted(out.items())[-1][1]} latest")
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # Activity-type minutes (run / bike / swim)
 # --------------------------------------------------------------------------- #
@@ -557,6 +609,36 @@ def fetch_garmin_data(days: int = DEFAULT_DAYS, force: bool = False) -> Dict[str
             if v is not None or k not in existing:
                 existing[k] = v
         cache["data"][date_str] = existing
+
+    # --- Precise (one-decimal) VO2max via the GraphQL gateway ---
+    # One call for the whole range (see fetch_vo2_precise). Stored under its
+    # own cache key so the integer vo2_max stays untouched for consumers
+    # that expect a whole number. The query reaches 30 days back so the
+    # last-change row BEFORE the fetch window seeds the forward-fill below
+    # (Garmin only emits rows when the value changes).
+    lookback_start = (
+        datetime.date.fromisoformat(dates[-1]) - datetime.timedelta(days=30)
+    ).isoformat()
+    vo2_precise = fetch_vo2_precise(client, lookback_start, dates[0])
+    for date_str, value in vo2_precise.items():
+        day = cache["data"].get(date_str)
+        if day is not None:
+            day["vo2_max_precise"] = value
+
+    # Garmin's vo2MaxScalar only emits a row when the value CHANGES, so days
+    # in between arrive without vo2_max_precise. Forward-fill each fetched
+    # day with the latest known precise value (the context rows before the
+    # window seed the carry) so consumers see a continuous series — the
+    # same value Garmin Connect shows on those in-between days.
+    carried: Optional[float] = None
+    for date_str in sorted(set(list(vo2_precise.keys()) + dates)):
+        v = vo2_precise.get(date_str)
+        if v is not None:
+            carried = float(v)
+        if date_str in dates and carried is not None:
+            day = cache["data"].get(date_str)
+            if day is not None and day.get("vo2_max_precise") is None:
+                day["vo2_max_precise"] = carried
 
     # --- Activity-type minutes (run / bike / swim) ---
     # Fetched once for the whole range (rate-limit friendly) and merged per day.

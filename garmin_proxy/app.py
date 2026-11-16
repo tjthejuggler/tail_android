@@ -116,6 +116,29 @@ def get_health_metrics(date: str = None, api_key: str = Security(api_key_header)
     return metrics
 
 
+@app.get("/api/v1/vo2-precise")
+def get_vo2_precise(api_key: str = Security(api_key_header)):
+    """
+    Full precise (one-decimal) VO2max history from the cache.
+
+    Response: {"2020-01-24": 50.1, "2020-01-29": 50.1, ..., "2026-11-16": 48.0}
+
+    Populated by fetch_data.py (rolling 30-day window) and
+    backfill_vo2_precise.py (full history walk). Days absent from the cache
+    simply have no entry.
+    """
+    if api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Forbidden: Invalid App Token")
+
+    cache = load_cache()
+    series = {}
+    for date_str, day in cache.get("data", {}).items():
+        v = day.get("vo2_max_precise")
+        if v is not None:
+            series[date_str] = v
+    return series
+
+
 @app.get("/api/v1/health-metrics-range")
 def get_health_metrics_range(
     start_date: str = None,

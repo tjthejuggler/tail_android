@@ -82,6 +82,53 @@ class GarminService {
     }
 
     /**
+     * Fetches the full precise (one-decimal) VO2max history from the proxy's
+     * dedicated endpoint ({"YYYY-MM-DD": 47.5, ...}). Returns an empty map on
+     * proxy builds that predate the endpoint (404) — callers treat that as
+     * "no precise history available".
+     */
+    suspend fun fetchVo2PreciseHistory(
+        proxyUrl: String,
+        appToken: String
+    ): Map<String, Int> = suspendCoroutine { continuation ->
+        Thread {
+            var result: Map<String, Int> = emptyMap()
+            try {
+                val cleanUrl = proxyUrl.trim().trimEnd('/')
+                val url = URL("$cleanUrl/api/v1/vo2-precise")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.setRequestProperty("User-Agent", USER_AGENT)
+                conn.setRequestProperty("Accept", "application/json")
+                conn.setRequestProperty("X-App-Auth", appToken)
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 60_000
+                try {
+                    val code = conn.responseCode
+                    if (code in 200..299) {
+                        val body = conn.inputStream.bufferedReader().readText()
+                        val json = JSONObject(body)
+                        val out = mutableMapOf<String, Int>()
+                        for (date in json.keys()) {
+                            // Stored ×10 on the phone (475 = 47.5).
+                            val v = json.optDouble(date)
+                            if (!v.isNaN()) out[date] = (v * 10).toInt()
+                        }
+                        result = out
+                    } else {
+                        Log.w(TAG, "fetchVo2PreciseHistory: HTTP $code — no history")
+                    }
+                } finally {
+                    conn.disconnect()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "fetchVo2PreciseHistory failed: ${e.message}")
+            }
+            continuation.resume(result)
+        }.start()
+    }
+
+    /**
      * Validates the Garmin proxy connection and credentials.
      * Returns true if connection succeeds, false otherwise.
      */
@@ -236,6 +283,9 @@ class GarminService {
         return GarminMetricsDto(
             date = json.optString("date", ""),
             vo2Max = json.optDouble("vo2_max").takeIf { !it.isNaN() },
+            // Precise (one-decimal) VO2max from the GraphQL gateway; null on
+            // proxy builds/cache days that predate it.
+            vo2MaxPrecise = json.optDouble("vo2_max_precise").takeIf { !it.isNaN() },
             fitnessAge = fitnessAgeInt,
             restingHr = json.optInt("resting_hr").takeIf { it > 0 },
             minHr = json.optInt("min_hr").takeIf { it > 0 },
@@ -267,6 +317,8 @@ class GarminService {
 data class GarminMetricsDto(
     val date: String,  // YYYY-MM-DD
     val vo2Max: Double?,
+    /** One-decimal VO2max (e.g. 47.5) from the GraphQL vo2MaxPreciseValue; null when unknown. */
+    val vo2MaxPrecise: Double? = null,
     val fitnessAge: Int?,
     val restingHr: Int?,
     val minHr: Int?,

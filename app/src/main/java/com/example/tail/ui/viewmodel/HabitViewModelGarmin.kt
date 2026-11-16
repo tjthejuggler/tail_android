@@ -430,9 +430,22 @@ internal suspend fun HabitViewModel.syncGarminBacklog() {
         ) { done, total ->
             _garminSyncStatus.value = "Fetching: $done / $total months"
         }
+        // Precise (×10) VO2max history: one dedicated-endpoint call replaces
+        // the whole VO2 series with one-decimal values (also upgrades cached
+        // historic integers in place). Merged AFTER the backlog so precise
+        // values win for every date they cover.
+        val vo2Precise = garminRepo.refreshVo2PreciseHistory(
+            s.garminProxyUrl, s.garminAppToken
+        )
+        val effectiveAllData = if (vo2Precise.isNotEmpty()) {
+            val vo2Series = vo2Precise[GarminType.VO2_MAX] ?: emptyMap()
+            allData.toMutableMap().also {
+                it[GarminType.VO2_MAX] = (allData[GarminType.VO2_MAX] ?: emptyMap()) + vo2Series
+            }
+        } else allData
         _garminSyncStatus.value = "Merging laptop data…"
         // Persist to cache so laptop data survives restarts.
-        withContext(Dispatchers.IO) { garminRepo.mergeAndCacheDailyData(allData) }
+        withContext(Dispatchers.IO) { garminRepo.mergeAndCacheDailyData(effectiveAllData) }
         // Load the merged cache (proxy + historic import) and apply to habits.
         // This ensures imported data (e.g. swim activities from months ago) is
         // applied alongside the fresh proxy data.

@@ -253,8 +253,13 @@ internal fun EditModeValueEditorRow(
                 dailyValues?.get(selectedDate.toString())
             }
         }
-        // Format per-metric for display (e.g. distance metres → km, 1 decimal).
-        rawValue?.let { garminType?.formatDisplayValue(it) ?: it.toString() } ?: "-"
+        // Format per-metric for display (e.g. distance metres → km, VO2max ×10
+        // → one decimal). rawValue comes from the Garmin cache, so the ×10
+        // VO2max tenths formatter is safe here (unlike habit-DB point values).
+        rawValue?.let {
+            if (garminType == GarminType.VO2_MAX) GarminType.VO2_MAX.formatVo2Tenths(it)
+            else garminType?.formatDisplayValue(it) ?: it.toString()
+        } ?: "-"
     } else {
         "-"
     }
