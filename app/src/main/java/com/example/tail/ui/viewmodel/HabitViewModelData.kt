@@ -147,6 +147,59 @@ private const val TAG = "HabitVM"
 private const val INCREMENT_PERSIST_ATTEMPTS = 3
 private const val INCREMENT_PERSIST_BACKOFF_MS = 500L
 
+/**
+ * Merges two habits-DB snapshots with a POINTWISE MAX per habit/date slot
+ * (lost-tap fix, 2026-11-17). Rapid taps each launch a persist coroutine;
+ * when one retries after backoff or re-asserts after its verified write,
+ * the cache may already hold a NEWER state chained by sibling taps. Taking
+ * the max per slot guarantees the merged snapshot is a superset of both
+ * inputs, so persisting or re-asserting it can never revert a sibling tap —
+ * while still undoing a stale disk reload that stole the cache (our slot
+ * wins wherever it is higher). Counts are monotonic within a tap burst and
+ * roll-forward backfills store absolute values that are >= what they
+ * replace, so max is order-safe for every optimistic writer here.
+ *
+ * [forceHabits]: habits whose entries are taken WHOLESALE from [ours]
+ * (used by the absolute count-set path, whose edit may legitimately be
+ * lower than the cache's value for that habit).
+ *
+ * Fast path: unchanged habits keep [theirs]'s existing map instance
+ * (in-tap snapshots share inner maps with the cache for every habit they
+ * didn't touch), so the merge cost is proportional to the touched habits.
+ */
+internal fun mergeIncrementSnapshots(
+    ours: Map<String, Map<String, Int>>,
+    theirs: Map<String, Map<String, Int>>,
+    forceHabits: Set<String> = emptySet()
+): Map<String, Map<String, Int>> {
+    if (ours.isEmpty()) return theirs
+    if (theirs.isEmpty()) return ours
+    val merged = HashMap<String, Map<String, Int>>(theirs)
+    for ((habit, ourEntries) in ours) {
+        val theirEntries = theirs[habit]
+        if (habit in forceHabits) {
+            if (ourEntries != theirEntries) merged[habit] = ourEntries
+            continue
+        }
+        if (theirEntries == null || theirEntries.isEmpty()) {
+            merged[habit] = ourEntries
+            continue
+        }
+        if (ourEntries === theirEntries) continue
+        val dayMerged = HashMap<String, Int>(theirEntries)
+        var changed = false
+        for ((date, v) in ourEntries) {
+            val existing = dayMerged[date]
+            if (existing == null || v > existing) {
+                dayMerged[date] = v
+                changed = true
+            }
+        }
+        if (changed) merged[habit] = dayMerged.toSortedMap()
+    }
+    return merged
+}
+
 internal suspend fun HabitViewModel.catchUpAndLoad(uri: Uri) {
     _isLoading.value = true
     _errorMessage.value = null
@@ -1127,9 +1180,22 @@ fun HabitViewModel.incrementHabit(
         // confirm the count actually reached disk; retry with backoff — the
         // same guarantee the system-notification answer path has had since
         // the earlier "movie increment failed" fix (HabitAsks.applyAnswer).
+        //
+        // LOST-TAP FIX (rapid multi-square tapping): retries merge the tap
+        // snapshot into the CURRENT cachedPhoneDb (pointwise max) instead of
+        // re-persisting the frozen tap-time state. During the backoff sleep
+        // (taken outside the file mutex) sibling taps' writes land; a
+        // frozen-snapshot retry then clobbered them on disk and the stale
+        // re-assert below reverted the UI — the "only the first tap
+        // survives" bug. The merge keeps our tap (the cache may have been
+        // stolen by a concurrent stale disk reload) while never reverting
+        // any newer sibling state. This coroutine runs on Main, like every
+        // writer of cachedPhoneDb, so reading it here is race-free.
         var persisted = false
         var lastPersistError: Throwable? = null
         for (attempt in 1..INCREMENT_PERSIST_ATTEMPTS) {
+            val dbToWrite = if (attempt == 1) updatedDb
+                else mergeIncrementSnapshots(updatedDb, cachedPhoneDb)
             try {
                 // Each attempt holds the process-wide habits-file mutex for
                 // the whole write+verify, so a concurrent read-modify-write
@@ -1138,7 +1204,7 @@ fun HabitViewModel.incrementHabit(
                 // write lands — the lost-tap-increment race.
                 var landed = false
                 habitsRepo.withFileLock {
-                    habitsRepo.persistDatabase(uri, context, updatedDb)
+                    habitsRepo.persistDatabase(uri, context, dbToWrite)
                     val reread = habitsRepo.loadDatabase(uri, context)
                     val rereadVal = reread[habitName]?.get(dateStr)
                     landed = if (trueValueOnly) {
@@ -1188,7 +1254,13 @@ fun HabitViewModel.incrementHabit(
         // have replaced cachedPhoneDb with the PRE-persist file while the
         // write was in flight. The rebuild below must never publish that
         // stale snapshot over the optimistic UI update from Step 1.
-        cachedPhoneDb = updatedDb
+        // LOST-TAP FIX: the re-assert itself is now a MERGE, not an
+        // overwrite — re-asserting the frozen tap-time snapshot used to
+        // revert any sibling tap whose optimistic update was already in
+        // the cache (the rapid-tap "only the first square stays" bug).
+        // Pointwise-max preserves both: sibling taps' higher slots win,
+        // and our persisted slots still beat a stale disk reload.
+        cachedPhoneDb = mergeIncrementSnapshots(updatedDb, cachedPhoneDb)
         dbEpoch++
         // Step 5 (moved BEFORE the bus emit / rebuild — the took-pills fix):
         // record the timestamp(s) now so every observer woken by the bus or
@@ -1378,9 +1450,13 @@ fun HabitViewModel.incrementHabitWithRollForward(
     // file, and a rebuild crash must never starve the persist.
     viewModelScope.launch {
         val uri = Uri.parse(uriString)
+        // LOST-TAP FIX: merge, don't overwrite — persisting/re-asserting the
+        // frozen tap-time snapshot reverts sibling rapid taps (see the
+        // incrementHabit Step-3 fix; same bug, roll-forward variant).
+        val dbToWrite = mergeIncrementSnapshots(updatedDb, cachedPhoneDb)
         try {
             habitsRepo.withFileLock {
-                habitsRepo.persistDatabase(uri, context, updatedDb)
+                habitsRepo.persistDatabase(uri, context, dbToWrite)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to persist roll-forward increment for '$habitName': ${e.message}", e)
@@ -1395,8 +1471,9 @@ fun HabitViewModel.incrementHabitWithRollForward(
         }
         // Re-assert the just-persisted state (same rationale as
         // incrementHabit: a concurrent disk reload during the persist
-        // must not become the snapshot the rebuild publishes).
-        cachedPhoneDb = updatedDb
+        // must not become the snapshot the rebuild publishes) — as a
+        // MERGE so a newer sibling tap in the cache survives.
+        cachedPhoneDb = mergeIncrementSnapshots(dbToWrite, cachedPhoneDb)
         dbEpoch++
         HabitsDataChangedBus.emit()
         try {

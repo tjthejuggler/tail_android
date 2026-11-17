@@ -343,10 +343,17 @@ fun HabitViewModel.setHabitCountForDate(habitName: String, newCount: Int, date: 
         var persisted = false
         var lastPersistError: Throwable? = null
         for (attempt in 1..COUNT_SET_PERSIST_ATTEMPTS) {
+            // LOST-TAP FIX: retries merge the edit snapshot into the CURRENT
+            // cache (pointwise max, but our edited habit taken WHOLESALE so a
+            // legitimate lower set-value isn't maxed back up) instead of
+            // re-persisting the frozen edit-time state, which clobbered
+            // sibling rapid taps on disk (see incrementHabit Step-3 fix).
+            val dbToWrite = if (attempt == 1) updatedDb
+                else mergeIncrementSnapshots(updatedDb, cachedPhoneDb, forceHabits = setOf(habitName))
             try {
                 var landed = false
                 habitsRepo.withFileLock {
-                    habitsRepo.persistDatabase(uri, context, updatedDb)
+                    habitsRepo.persistDatabase(uri, context, dbToWrite)
                     val reread = habitsRepo.loadDatabase(uri, context)
                     val rereadVal = reread[habitName]?.get(dateStr)
                     landed = if (directionUp) (rereadVal ?: 0) >= storedValue
