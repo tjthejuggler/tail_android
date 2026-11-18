@@ -7,6 +7,7 @@ import android.net.Uri
 import android.util.Log
 import com.example.tail.data.AppSettings
 import com.example.tail.data.HABIT_ORDER
+import com.example.tail.data.PillLogParser
 import com.example.tail.data.HabitsDatabase
 import com.example.tail.data.HabitsRepository
 import com.example.tail.data.SECONDARY_VALUE_SLOT_PREFIXES
@@ -511,6 +512,13 @@ internal object CompanionReadEndpoints {
      * `textInputOptionDescriptions` as the description column. The
      * default_amount / default_unit / nutrient_tags columns are forward
      * compat for the upcoming labels feature and are always null today.
+     *
+     * Pill-log habits (2026-11-17, Hoot iodine fix): the per-serving
+     * nutrient composition the user maintains in Tail's pill catalog (the
+     * pill dialog's description section) is merged in as the description —
+     * the catalog wins over a same-text option description, and every
+     * catalog pill is listed even when never logged. That is the
+     * machine-readable per-serving panel companions (Hoot) credit from.
      */
     fun queryHabitLabels(
         context: Context?,
@@ -524,17 +532,29 @@ internal object CompanionReadEndpoints {
         if (!sharedHabit(settings, habitId)) return cursor
 
         val described = settings.textInputOptionDescriptions[habitId].orEmpty()
+        // Pill-log habits carry their per-serving composition in the pill
+        // catalog (name → "DHA 350mg, EPA 180mg"); the generic option
+        // descriptions stay the source for non-catalog options.
+        val catalog = if (habitId in settings.pillLogHabits) {
+            PillLogParser.DEFAULT_CATALOG +
+                settings.pillCatalog.filterKeys { it !in PillLogParser.LEGACY_REMOVED_CATALOG_KEYS }
+        } else {
+            emptyMap()
+        }
         val logOptions = if (habitId in settings.textInputHabits) {
             loadTextLog(context, settings, habitId).values
         } else {
             emptyList()
         }
-        val labels = (logOptions + described.keys).distinct().sorted()
+        // Log values keep line granularity (multi-pill submissions are
+        // '\n'-joined in one entry); catalog pills join the inventory by name.
+        val loggedLines = logOptions.flatMap { it.split('\n') }.map { it.trim() }.filter { it.isNotEmpty() }
+        val labels = (loggedLines + described.keys + catalog.keys).distinct().sorted()
         for (text in labels) {
             emit(cursor, cols, mapOf(
                 COL_LABEL_ID to stableId("label", habitId, text),
                 COL_LABEL_TEXT to text,
-                COL_DESCRIPTION to described[text]
+                COL_DESCRIPTION to (catalog[text] ?: described[text])
                 // COL_DEFAULT_AMOUNT / COL_DEFAULT_UNIT / COL_NUTRIENT_TAGS: not built yet
             ))
         }

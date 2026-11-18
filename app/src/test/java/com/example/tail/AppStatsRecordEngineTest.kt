@@ -176,13 +176,30 @@ class AppStatsRecordEngineTest {
     }
 
     @Test
-    fun `anti-streak records framed as caution`() {
+    fun `anti-streak metrics never notify`() {
+        // At day start every habit carries a live anti-streak, so "today"
+        // trivially breaks the all-time high EVERY morning — the comparison
+        // is meaningless and the metrics are banned from the registry.
+        // Even wildly record-breaking anti-streak values must stay silent.
         val r = evaluate(
-            series(antiStreakSums = { if (it == 5) 50 else 5 }, todayAntiStreakSum = 55)
+            series(
+                antiStreakSums = { if (it == 5) 50 else 5 },
+                todayAntiStreakSum = 5000,
+                antiStreakCounts = { if (it == 5) 8 else 1 },
+                todayAntiStreakCount = 999
+            )
         )
-        val ev = r.evaluations.first { it.metric == "total_anti_streak_days" }
-        assertEquals(AppStatsRecordEngine.Verdict.BROKEN, ev.verdict)
-        assertTrue(ev.title.startsWith("⚠️"))
+        assertTrue(r.evaluations.none { it.metric == "total_anti_streak_days" })
+        assertTrue(r.evaluations.none { it.metric == "habits_with_anti_streak" })
+        assertTrue("total_anti_streak_days" !in r.updatedStates)
+        assertTrue("habits_with_anti_streak" !in r.updatedStates)
+        // Same for the daily "records held" summary.
+        assertTrue(
+            AppStatsRecordEngine.currentRecords(
+                series(antiStreakSums = { if (it == 0) 50 else 5 }),
+                date(-1)
+            ).none { it.metric == "total_anti_streak_days" }
+        )
     }
 
     @Test

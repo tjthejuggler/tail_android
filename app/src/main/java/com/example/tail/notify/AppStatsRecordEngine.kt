@@ -102,15 +102,21 @@ object AppStatsRecordEngine {
         /** Near-record threshold: value within this of the record (absolute). */
         val nearAbs: Double,
         /** Near-record threshold as a fraction of the record (used when larger). */
-        val nearFrac: Double,
-        /** Emoji + tone; "caution" metrics are the anti-streak family. */
-        val caution: Boolean = false
+        val nearFrac: Double
     )
 
     private val intFmt: (Double) -> String = { v -> v.toInt().toString() }
     private val oneDecFmt: (Double) -> String = { v -> "%.1f".format(v) }
     private val twoDecFmt: (Double) -> String = { v -> "%.2f".format(v) }
 
+    // NOTE: the anti-streak metrics (total_anti_streak_days,
+    // habits_with_anti_streak) are deliberately NOT in this registry.
+    // They are evaluated against today's LIVE value, which at day start —
+    // before any habit is incremented — trivially carries an active
+    // anti-streak for every habit, so "today" would break the all-time
+    // high EVERY morning (history records reflect end-of-day states).
+    // The comparison is meaningless; anti-streak series data survives
+    // only inside the total_net_streak_days metric.
     private val METRICS = listOf(
         MetricDef("best_day_points", "best single day (points)", "pts", intFmt, 2.0, 0.15),
         MetricDef("most_habits_day", "most habits done in one day", "habits", intFmt, 1.0, 0.0),
@@ -120,15 +126,7 @@ object AppStatsRecordEngine {
         MetricDef("avg365", "365-day average", "pts/day", twoDecFmt, 0.0, 0.01),
         MetricDef("total_streak_days", "total streak days (all habits)", "days", intFmt, 2.0, 0.05),
         MetricDef("habits_with_streak", "habits with an active streak", "habits", intFmt, 1.0, 0.0),
-        MetricDef(
-            "total_anti_streak_days", "total anti-streak days (all habits)", "days",
-            intFmt, 2.0, 0.05, caution = true
-        ),
         MetricDef("total_net_streak_days", "total net streak days (all habits)", "days", intFmt, 2.0, 0.05),
-        MetricDef(
-            "habits_with_anti_streak", "habits with an active anti-streak", "habits",
-            intFmt, 1.0, 0.0, caution = true
-        ),
         MetricDef("aggregate_streak", "day streak with any points", "days", intFmt, 2.0, 0.05)
     )
 
@@ -182,14 +180,9 @@ object AppStatsRecordEngine {
                         currentValue = current,
                         recordValue = record,
                         recordDate = v.recordDate,
-                        title = if (m.caution) "⚠️ New all-time high: ${m.label}"
-                        else "🏆 New all-time record: ${m.label}!",
-                        message = if (m.caution)
-                            "You've hit a new all-time high for ${m.label}: ${m.fmt(current)} ${m.unit} " +
-                                "(previous record ${m.fmt(record)} set ${v.recordDate ?: "earlier"})."
-                        else
-                            "${m.fmt(current)} ${m.unit} — previous record was ${m.fmt(record)} " +
-                                "set on ${v.recordDate ?: "an earlier day"}. Keep it going!"
+                        title = "🏆 New all-time record: ${m.label}!",
+                        message = "${m.fmt(current)} ${m.unit} — previous record was ${m.fmt(record)} " +
+                            "set on ${v.recordDate ?: "an earlier day"}. Keep it going!"
                     )
                     updated[m.key] = MetricState(episodeNotified = true)
                 }
@@ -212,15 +205,10 @@ object AppStatsRecordEngine {
                     currentValue = current,
                     recordValue = record,
                     recordDate = v.recordDate,
-                    title = if (m.caution) "⚠️ Approaching record: ${m.label}"
-                    else "📈 Record within reach: ${m.label}",
-                    message = if (m.caution)
-                        "You're at ${m.fmt(current)} ${m.unit} vs the all-time high of " +
-                            "${m.fmt(record)} (set ${v.recordDate ?: "earlier"}) — worth turning around."
-                    else
-                        "Currently ${m.fmt(current)} ${m.unit} vs the all-time record of " +
-                            "${m.fmt(record)} set on ${v.recordDate ?: "an earlier day"} — " +
-                            "only ${m.fmt(record - current)} to go!"
+                    title = "📈 Record within reach: ${m.label}",
+                    message = "Currently ${m.fmt(current)} ${m.unit} vs the all-time record of " +
+                        "${m.fmt(record)} set on ${v.recordDate ?: "an earlier day"} — " +
+                        "only ${m.fmt(record - current)} to go!"
                 )
             }
         }
@@ -301,8 +289,9 @@ object AppStatsRecordEngine {
         put("most_habits_day", lastTodayOr(series.dailyHabitCounts), series.dailyHabitCounts)
         put("total_streak_days", lastTodayOr(series.dailyStreakSums), series.dailyStreakSums)
         put("habits_with_streak", lastTodayOr(series.dailyStreakCounts), series.dailyStreakCounts)
-        put("total_anti_streak_days", lastTodayOr(series.dailyAntiStreakSums), series.dailyAntiStreakSums)
-        put("habits_with_anti_streak", lastTodayOr(series.dailyAntiStreakCounts), series.dailyAntiStreakCounts)
+        // Anti-streak sums/counts are intentionally NOT registered here —
+        // see the note on METRICS for why they must not be notifiable. The
+        // sums feed only the net-streak metric below.
         // Net streak days = streak sums minus anti-streak sums per date.
         val dailyNetStreakSums = List(series.dates.size) { i ->
             series.dailyStreakSums[i] - series.dailyAntiStreakSums[i]
