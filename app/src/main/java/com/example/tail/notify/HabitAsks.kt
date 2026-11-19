@@ -512,7 +512,7 @@ object HabitAsks {
      * phone-local cache) for ones worth asking about, and registers an ask in
      * the notification system (in-app center + system notification) for EVERY
      * newly askable movie — not just the first. Shared by the app-open
-     * catch-up path and the background [MovieSyncWorker], so the "Watched
+     * catch-up path and the background bridge-sync worker ([TailCueSyncWorker]), so the "Watched
      * this?" notification can appear without the app being opened at all.
      *
      * A movie is askable when its most recent session started within the

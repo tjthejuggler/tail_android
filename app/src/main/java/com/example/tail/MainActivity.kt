@@ -60,6 +60,12 @@ class MainActivity : ComponentActivity() {
         /** Intent extra: navigation route to open on launch (deep link from overlays). */
         const val EXTRA_OPEN_ROUTE = "open_route"
 
+        /** Minimum spacing between foreground-triggered one-shot syncs. */
+        private const val FOREGROUND_SYNC_THROTTLE_MS = 10 * 60 * 1000L // 10 min
+
+        /** Timestamp of the last foreground sync (0 = never). */
+        @Volatile private var lastForegroundSyncAt = 0L
+
         /** Chess Readiness stats screen — deep-linked from the floating bubble menu. */
         const val ROUTE_CHESS_READINESS_STATS = "chess_readiness_stats"
 
@@ -144,13 +150,13 @@ class MainActivity : ComponentActivity() {
         // died (process kill, APK update, OEM cleanup). No-op when off/running.
         com.example.tail.widget.StatsOverlayService.ensureRunning(applicationContext)
 
-        // Keep the phone-local movie cache warm and post "did you watch this?"
-        // asks even when the app is not open. Periodic (15 min min interval),
-        // network-constrained; KEEP policy means re-launches never reset it.
-        com.example.tail.notify.MovieSyncWorker.schedule(applicationContext)
-
-        // Pull TailCue predictive warnings (cues) from the bridge into the
-        // notification system, with 👍/👎/note feedback routed back to TailCue.
+        // Background bridge sync: TailCue predictive warnings (cues) + the
+        // movie cache in ONE hourly pass (merged 2026-11-19; was two separate
+        // 15-min pollers — the cause of the constant background traffic and
+        // battery drain). Skips itself when offline (CONNECTED constraint:
+        // airplane mode = zero wakeups) or when battery is low, and stands
+        // down within 50 min of any foreground sync (see onResume). UPDATE
+        // policy upgrades old installs and cancels the legacy movie poller.
         com.example.tail.notify.TailCueSyncWorker.schedule(applicationContext)
 
         // Keep the phone-local Garmin cache warm even when the app is closed.
@@ -222,6 +228,24 @@ class MainActivity : ComponentActivity() {
                     gdriveManager = gdriveManager
                 )
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Foreground refresh of the bridge-backed data (TailCue cues, movie
+        // cache). Background syncing was cut back to once an hour (battery:
+        // the old 15-min polling caused constant background traffic,
+        // 2026-11-19) — while the app is actually open and visible we can
+        // afford an immediate one-shot pass so it still feels live.
+        // Throttled: rapid re-entries (permission dialogs, screen-offs of a
+        // few seconds, config changes) must not re-hit the network.
+        val now = System.currentTimeMillis()
+        if (now - lastForegroundSyncAt >= FOREGROUND_SYNC_THROTTLE_MS) {
+            lastForegroundSyncAt = now
+            // One combined pass (cues + movies). It also records the sync
+            // timestamp, which suppresses the next periodic background pass.
+            com.example.tail.notify.TailCueSyncWorker.syncNow(applicationContext)
         }
     }
 }

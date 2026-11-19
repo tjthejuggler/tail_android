@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
  * flowing through their WorkManager workers — so "everything synced except
  * Garmin" with nothing obviously broken on either side.
  *
- * This worker mirrors [MovieSyncWorker]: every ~2 hours (network-constrained,
+ * This worker mirrors the bridge-sync half of [TailCueSyncWorker]: every ~2 hours (network-constrained,
  * no charging requirement) it pulls the last 7 days of metrics from the proxy
  * and MERGES them into the phone-local Garmin cache. The habit-DB application
  * of that cached data already happens on every app foreground (idempotent
@@ -132,14 +132,16 @@ class GarminSyncWorker(appContext: Context, params: WorkerParameters) :
 
         /**
          * Idempotently schedules the periodic sync (2 h, any connected
-         * network). Safe to call on every app open — KEEP leaves an existing
-         * schedule untouched.
+         * network, battery not low — battery gate added 2026-11-19 with the
+         * background-traffic cleanup). Safe to call on every app open —
+         * KEEP leaves an existing schedule untouched.
          */
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<GarminSyncWorker>(2, TimeUnit.HOURS)
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
+                        .setRequiresBatteryNotLow(true)
                         .build()
                 )
                 .build()

@@ -14,7 +14,7 @@ import java.io.File
  *
  * The bridge is only reachable on the home LAN, and the KDE-side watcher
  * already has the movie seconds after playback starts — so the phone keeps
- * its own copy, refreshed by [com.example.tail.notify.MovieSyncWorker] in
+ * its own copy, refreshed by [com.example.tail.notify.TailCueSyncWorker] in
  * the background and by the app whenever it opens. Every movie surface
  * (the "watched this?" ask, the increment-dialog suggestion, the
  * last-watched picker) then reads instantly from disk with zero network
