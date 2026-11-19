@@ -95,7 +95,7 @@ object SceneFigureClient {
             val hs = hashFile(context, app)
             if (hs.exists()) hs.readText().trim() else ""
         } catch (_: Exception) { "" }
-        return Figure(cachedBitmap(cacheFile(context, app)), hash, cachedZones(context, app))
+        return Figure(cachedBitmap(app, cacheFile(context, app)), hash, cachedZones(context, app))
     }
 
     /**
@@ -160,7 +160,7 @@ object SceneFigureClient {
             }
             if (remoteHash == null || remoteHash == FigureSnapshotContract.EMPTY_HASH) {
                 // App absent, permission denied, or no figure yet today.
-                return Figure(cachedBitmap(cache), remoteHash ?: "", 0)
+                return Figure(cachedBitmap(app, cache), remoteHash ?: "", 0)
             }
             // Persist the confidence metric for the synchronous rebind path.
             try {
@@ -183,13 +183,16 @@ object SceneFigureClient {
                     if (bmp != null) {
                         cache.writeBytes(bytes)
                         hashStore.writeText(remoteHash!!)
-                        // Octo's body art has transparent interior pockets
-                        // (the sky showed through his torso). Fill ENCLOSED
-                        // transparent regions with white; transparency
-                        // connected to the bitmap edge stays (real
-                        // background around tentacles etc.). Kenga has no
-                        // holes, so this is a no-op for him.
-                        val processed = fillInteriorHoles(bmp)
+                        // OCTO ONLY: his torso dome is an ENCLOSED transparent
+                        // pocket that must render solid. Kenga must NOT get
+                        // this — his right arm-body pocket is a real
+                        // see-through gap, but at served resolution (~270 px)
+                        // its pinch channel seals shut with anti-aliased px,
+                        // so the border-flood classified it as a hole and
+                        // painted it WHITE (2026-11-19 bug). His figures are
+                        // served as-is; the disk cache stores raw bytes, so
+                        // gating at decode time needs no cache invalidation.
+                        val processed = if (app == App.OCTO) fillInteriorHoles(bmp) else bmp
                         Log.i(TAG, "${app.packageName} figure updated " +
                                 "(${bytes.size / 1024} KB, hash=${remoteHash?.take(8)}…)")
                         return Figure(processed, remoteHash!!, remoteZones)
@@ -197,20 +200,21 @@ object SceneFigureClient {
                 }
                 Log.w(TAG, "${app.packageName} served undecodable figure; keeping cache")
             }
-            return Figure(cachedBitmap(cache), remoteHash!!, remoteZones)
+            return Figure(cachedBitmap(app, cache), remoteHash!!, remoteZones)
         } catch (e: SecurityException) {
             // Signature mismatch — not our app family; degrade silently.
-            return Figure(cachedBitmap(cache), "")
+            return Figure(cachedBitmap(app, cache), "")
         } catch (e: Exception) {
             Log.i(TAG, "${app.packageName} figure unavailable: ${e.message}")
-            return Figure(cachedBitmap(cache), "")
+            return Figure(cachedBitmap(app, cache), "")
         }
     }
 
-    private fun cachedBitmap(cache: File): Bitmap? {
+    private fun cachedBitmap(app: App, cache: File): Bitmap? {
         if (!cache.exists()) return null
         return try {
-            fillInteriorHoles(BitmapFactory.decodeFile(cache.absolutePath))
+            val bmp = BitmapFactory.decodeFile(cache.absolutePath) ?: return null
+            if (app == App.OCTO) fillInteriorHoles(bmp) else bmp
         } catch (_: Exception) {
             null
         }

@@ -58,8 +58,29 @@ object BridgeBackupManager {
     /** Minimum interval between actual pushes (coalesces burst increments). */
     private const val DEBOUNCE_MS = 60_000L
 
+    /**
+     * Hard floor between two actual network pushes. The habits DB is
+     * multi-MB (5.3 MB live), so a save-every-few-minutes pattern (PC
+     * widget events, Tasker-launched refreshes, timestamp appends) was
+     * uploading ~7 MB per save even while the phone sat idle overnight —
+     * 100–270 MB per 2-hour netstats bucket, Tail's #2 battery item
+     * (2026-11-19 report). Real changes now land at most 30 min late;
+     * unchanged content is never uploaded at all (persistent hash guard).
+     * 30 min (battery report round 3 feedback: even the 10-min floor kept
+     * the mobile radio ~53% active — this is an off-device SAFETY copy,
+     * and the live file is separately Syncthing-synced in real time, so
+     * 30-min backup staleness is acceptable).
+     */
+    private const val MIN_PUSH_INTERVAL_MS = 30L * 60 * 1000
+
     /** Backoff between retries of a failed push within the debounce loop. */
     private val RETRY_DELAYS_MS = longArrayOf(5_000, 15_000, 45_000)
+
+    /** Prefs persisting the pushed-content hashes across process restarts. */
+    private const val STATE_PREFS = "bridge_backup_state"
+    private const val KEY_DB_HASH = "last_pushed_db_hash"
+    private const val KEY_TS_HASH = "last_pushed_ts_hash"
+    private const val KEY_LAST_PUSH_AT = "last_push_at"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pushMutex = Mutex()
@@ -116,6 +137,7 @@ object BridgeBackupManager {
             }
             pending = false
             delay(DEBOUNCE_MS) // coalesce the burst
+            enforcePushSpacing(appContext)
             // Retry with backoff; on final failure leave `pending` false but
             // remember nothing was pushed — the next save re-arms the loop.
             var pushed = false
@@ -128,6 +150,30 @@ object BridgeBackupManager {
                 Log.w(TAG, "backup push failed after retries — will retry on next save")
             }
         }
+    }
+
+    /**
+     * Waits out any remainder of [MIN_PUSH_INTERVAL_MS] since the last
+     * actual network push, so rapid save bursts cannot turn into a
+     * rapid-fire series of multi-MB uploads. Called on the debounce
+     * coroutine — the extra wait only delays a push, never drops one.
+     */
+    private suspend fun enforcePushSpacing(appContext: Context) {
+        val prefs = appContext.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+        val since = System.currentTimeMillis() - prefs.getLong(KEY_LAST_PUSH_AT, 0L)
+        if (since in 1 until MIN_PUSH_INTERVAL_MS) {
+            delay(MIN_PUSH_INTERVAL_MS - since)
+        }
+    }
+
+    private fun lastPushAt(appContext: Context): Long =
+        appContext.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+            .getLong(KEY_LAST_PUSH_AT, 0L)
+
+    private fun notePush(appContext: Context) {
+        appContext.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putLong(KEY_LAST_PUSH_AT, System.currentTimeMillis())
+            .apply()
     }
 
     /** Bridge port — mirrors PC_WIDGET_BRIDGE_PORT / BRIDGE_PORT (8001). */
@@ -249,12 +295,23 @@ object BridgeBackupManager {
                 }
                 // Skip pushes of content already on the bridge (common when a
                 // save produced identical bytes, e.g. no-op day rollovers).
+                // The guard is PERSISTED: an in-memory-only check reset on
+                // every process restart and re-uploaded the whole multi-MB
+                // DB for unchanged content (the 2026-11-19 TX storm).
                 val hash = bytes.contentHashCode()
-                if (hash == lastPushedHash) return@withLock true
+                val prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+                if (hash == lastPushedHash ||
+                    hash == prefs.getInt(KEY_DB_HASH, 0)
+                ) {
+                    lastPushedHash = hash
+                    return@withLock true
+                }
 
                 val ok = postBackup(bridgeUrl, token, bytes)
                 if (ok) {
                     lastPushedHash = hash
+                    prefs.edit().putInt(KEY_DB_HASH, hash).apply()
+                    notePush(context)
                     lastGoodUrl = bridgeUrl
                     Log.i(TAG, "pushed ${bytes.size} bytes to $bridgeUrl")
                 }
@@ -283,8 +340,17 @@ object BridgeBackupManager {
             val tsBytes = File(context.filesDir, TIMESTAMPS_FILE).takeIf { it.exists() }?.readBytes()
             val minBytes = File(context.filesDir, MINUTES_FILE).takeIf { it.exists() }?.readBytes()
             if (tsBytes == null && minBytes == null) return false
+            // Hash the STORE CONTENTS, not the envelope: the envelope carries
+            // a pushedAt timestamp, so envelope bytes never repeat and a
+            // content-based guard computed on the envelope could never skip.
             val combined = (tsBytes?.contentHashCode() ?: 0) * 31 + (minBytes?.contentHashCode() ?: 0)
-            if (combined == lastPushedTsHash) return true
+            val prefs = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE)
+            if (combined == lastPushedTsHash ||
+                combined == prefs.getInt(KEY_TS_HASH, 0)
+            ) {
+                lastPushedTsHash = combined
+                return true
+            }
             // Wrap both stores in one JSON envelope the bridge can validate.
             val envelope = JSONObject().apply {
                 tsBytes?.let { put("timestamps", JSONObject(String(it))) }
@@ -294,6 +360,8 @@ object BridgeBackupManager {
             val ok = postBackupTo("$bridgeUrl/api/v1/$TIMESTAMPS_BACKUP_PATH", token, envelope)
             if (ok) {
                 lastPushedTsHash = combined
+                prefs.edit().putInt(KEY_TS_HASH, combined).apply()
+                notePush(context)
                 Log.i(TAG, "pushed timestamp stores (${envelope.size} bytes) to $bridgeUrl")
             }
             ok
@@ -304,8 +372,18 @@ object BridgeBackupManager {
     }
 
     /** POSTs raw bytes to [path]; returns true on HTTP 200 + status:ok. */
+    /**
+     * POSTs raw bytes to [path], gzip-compressed (`Content-Encoding: gzip`,
+     * accepted by the bridge since 2026-11-19). The habit JSON is highly
+     * repetitive (~10x compression) — on-air bytes per push drop ~10x,
+     * directly cutting mobile radio-active time (the #1 remaining item of
+     * the 2026-11-19 battery rounds). Returns true on HTTP 200 + status:ok.
+     */
     private fun postBackupTo(path: String, token: String, bytes: ByteArray): Boolean {
         return try {
+            val bufOut = java.io.ByteArrayOutputStream(bytes.size / 4)
+            java.util.zip.GZIPOutputStream(bufOut).use { gz -> gz.write(bytes) }
+            val gzBytes = bufOut.toByteArray()
             val conn = URL(path).openConnection() as HttpURLConnection
             conn.connectTimeout = 5_000
             conn.readTimeout = 30_000
@@ -313,8 +391,9 @@ object BridgeBackupManager {
             conn.doOutput = true
             conn.setRequestProperty("X-App-Auth", token)
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            conn.setFixedLengthStreamingMode(bytes.size)
-            conn.outputStream.use { it.write(bytes) }
+            conn.setRequestProperty("Content-Encoding", "gzip")
+            conn.setFixedLengthStreamingMode(gzBytes.size)
+            conn.outputStream.use { it.write(gzBytes) }
             val code = conn.responseCode
             val body = (if (code == 200) conn.inputStream else conn.errorStream)
                 ?.bufferedReader()?.readText()?.take(300) ?: ""

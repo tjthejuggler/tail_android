@@ -41,6 +41,7 @@ On the Android side:
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import json
 import logging
@@ -222,16 +223,35 @@ def _prune_habit_backups():
         pass
 
 
+def _decoded_body(raw: bytes, content_encoding: Optional[str]) -> bytes:
+    """Decode a request body honouring `Content-Encoding: gzip` (or none).
+
+    The phone's backup pushes are gzipped since 2026-11-19 (the multi-MB
+    habit JSON compresses ~10x — a direct radio-time win). Uncompressed
+    bodies keep working for older phone builds and manual curl restores.
+    Malformed gzip raises so the endpoint's JSON validation reports a
+    clean 400 instead of writing garbage.
+    """
+    if content_encoding and "gzip" in content_encoding.lower():
+        return gzip.decompress(raw)
+    return raw
+
+
 @app.post("/api/v1/backup/habits", tags=["backup"])
 async def backup_habits_push(request: Request, api_key: str = Security(verify_key)):
     """
     Accept the phone's habits DB (raw JSON document body) as a backup.
 
+    The payload may be gzip-compressed (`Content-Encoding: gzip`) — the
+    multi-MB habit JSON compresses ~10x, and the phone pushes it after
+    every change (2026-11-19 battery round: mobile radio was active ~53%
+    of the test window partly on these uploads' account).
+
     The payload is validated as parseable JSON before anything is written;
     writes are atomic (tmp + rename) so a dropped connection can never leave
     a half-written backup that a restore might pick up.
     """
-    body = await request.body()
+    body = _decoded_body(await request.body(), request.headers.get("content-encoding"))
     if not body:
         raise HTTPException(status_code=400, detail="Empty backup payload")
     try:
@@ -445,9 +465,10 @@ async def backup_timestamps_push(request: Request, api_key: str = Security(verif
     Accept the phone's timestamp stores as a backup.
 
     Expected body: `{"timestamps": {...}, "minutes": {...}, "pushedAt": ms}`.
+    May be gzip-compressed (`Content-Encoding: gzip`).
     Validated as JSON before writing; atomic tmp+rename writes.
     """
-    body = await request.body()
+    body = _decoded_body(await request.body(), request.headers.get("content-encoding"))
     if not body:
         raise HTTPException(status_code=400, detail="Empty backup payload")
     try:

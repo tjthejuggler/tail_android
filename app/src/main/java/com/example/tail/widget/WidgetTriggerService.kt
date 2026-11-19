@@ -53,8 +53,19 @@ class WidgetTriggerService : Service() {
         private const val CHANNEL_ID = "tail_widget_trigger"
         private const val NOTIFICATION_ID = 9912
 
-        /** How often (ms) to poll the foreground app. */
+        /** How often (ms) to poll the foreground app while the screen is on. */
         private const val POLL_INTERVAL_MS = 2000L
+
+        /**
+         * Poll cadence (ms) while the screen is OFF. The bubble is invisible
+         * and the usage poll finds nothing new, so burning the 2 s loop
+         * overnight made the monitor FGS one of Tail's top battery items
+         * (2026-11-19 battery report: FGS CPU 7m04s of a 10m screen-off
+         * window). 15 s keeps media listening-minute attribution exact to
+         * ±15 s and reacts to the next screen-on within one tick; the
+         * screen-on switch back is immediate (see [registerScreenStateReceiver]).
+         */
+        private const val SCREEN_OFF_POLL_INTERVAL_MS = 15_000L
 
         /**
          * How far back (ms) to look when querying usage events.
@@ -168,7 +179,7 @@ class WidgetTriggerService : Service() {
     /** Package of the Chess Readiness app (null when feature is off/unset). */
     private var chessReadinessPackage: String? = null
 
-    /** Receives ACTION_SCREEN_OFF so timer sessions can be finalised. */
+    /** Receives ACTION_SCREEN_OFF/ON (timer finalisation + poll cadence). */
     private var screenReceiver: BroadcastReceiver? = null
 
     /**
@@ -226,7 +237,9 @@ class WidgetTriggerService : Service() {
         Log.d(TAG, "Service created")
         // Arm the watchdog so that if THIS service is ever killed without a
         // matching stop (process death, install-time kill, crash), the alarm
-        // receiver brings it back within ~2 minutes.
+        // receiver brings it back — quickly (2-min beats) in the warmup
+        // window right after arming, then at a battery-friendly 15-min
+        // steady cadence (see WidgetWatchdogReceiver).
         WidgetWatchdogReceiver.setMonitorShouldRun(this, true)
         WidgetWatchdogReceiver.schedule(this)
         createNotificationChannel()
@@ -275,13 +288,21 @@ class WidgetTriggerService : Service() {
                 when (intent.action) {
                     Intent.ACTION_SCREEN_OFF -> {
                         Log.d(TAG, "Screen off — finalising non-persistent timer sessions")
+                        screenOff = true
                         endOrphanedTimerSessions()
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        // Back to the fast cadence immediately; the next
+                        // poll tick catches the fresh foreground app.
+                        screenOff = false
                     }
                     else -> Unit
                 }
             }
         }
-        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF).apply {
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
         screenReceiver = receiver
         try {
             // System screen broadcasts cannot target O+ receivers by
@@ -379,10 +400,18 @@ class WidgetTriggerService : Service() {
                 }
             }
             if (isPolling) {
-                handler.postDelayed(this, POLL_INTERVAL_MS)
+                handler.postDelayed(this, currentPollInterval())
             }
         }
     }
+
+    /** True while the display is off (drives the slow poll cadence). */
+    @Volatile
+    private var screenOff = false
+
+    /** Poll cadence right now: fast while the screen is on, slow when off. */
+    private fun currentPollInterval(): Long =
+        if (screenOff) SCREEN_OFF_POLL_INTERVAL_MS else POLL_INTERVAL_MS
 
     private fun startPolling() {
         if (isPolling) return

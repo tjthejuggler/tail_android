@@ -638,7 +638,8 @@
 
         <!--
             WidgetWatchdogReceiver: self-healing watchdog for the widget
-            stack. A 2-minute allow-while-idle heartbeat alarm restarts
+            stack. An adaptive allow-while-idle heartbeat alarm (2-min
+            warmup beats, then a 15-min steady cadence) restarts
             WidgetTriggerService whenever it should be running but was
             killed (APK install, crash, OEM cleanup — install-time kills
             do NOT restart START_STICKY services). BOOT_COMPLETED revives
