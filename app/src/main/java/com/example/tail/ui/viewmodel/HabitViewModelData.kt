@@ -329,6 +329,15 @@ internal suspend fun HabitViewModel.catchUpAndLoad(uri: Uri) {
             performChessTimestampTrim()
         }
 
+        // ── One-time long-press shadowing-action cleanup ──────────────
+        // A stored "details"/"camera" long-press action on a habit WITH an
+        // app association silently shadows the association (long-press opens
+        // the meal input instead of the associated app). Drop the stale
+        // stored actions so the association wins.
+        if (!settingsRepo.isLongPressShadowCleared()) {
+            performLongPressShadowCleanup()
+        }
+
         // ── Movie-bridge timestamp reconciliation ────────────────────
         // The text log is the source of truth for movie habits: make
         // each entry's watch-start time THE timestamp. Backfills past

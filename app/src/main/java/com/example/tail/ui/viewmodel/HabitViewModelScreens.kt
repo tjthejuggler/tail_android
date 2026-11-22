@@ -1079,6 +1079,17 @@ fun HabitViewModel.addHabitAppAssociation(habitName: String, packageName: String
             settingsRepo.saveHabitAppAssociations(associations)
             _settings.value = _settings.value.copy(habitAppAssociations = associations)
         }
+        // Associating an app expresses "long-press launches this app" — reset
+        // a stored meal action (details/camera) that would silently shadow it.
+        // The "url" action is untouched: it is an explicitly configured
+        // alternative, not a legacy default.
+        if (_settings.value.habitLongPressActions[habitName] in listOf(
+                com.example.tail.data.LONG_PRESS_DETAILS,
+                com.example.tail.data.LONG_PRESS_CAMERA
+            )
+        ) {
+            setHabitLongPressAction(habitName, com.example.tail.data.LONG_PRESS_APP)
+        }
     }
 }
 

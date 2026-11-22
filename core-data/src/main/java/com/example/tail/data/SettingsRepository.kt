@@ -307,6 +307,13 @@ private val KEY_MIGRATION_BREATHING_SESSIONS_PRIMARY_DONE = booleanPreferencesKe
 // trim chess.com-linked habits' daily timestamps to one per game.
 private val KEY_CHESS_TIMESTAMPS_TRIMMED = booleanPreferencesKey("migration_chess_timestamps_trimmed")
 
+// One-time cleanup (Nov-23-2026): meal habits configured BEFORE the long-press
+// action system existed may carry a stored "details"/"camera" action that
+// silently shadows an app association added later — long-press then opens the
+// meal input instead of launching the associated app. The migration drops
+// those shadowing actions so the association (the "app" default) wins.
+private val KEY_MIGRATION_LONG_PRESS_SHADOW_CLEARED = booleanPreferencesKey("migration_long_press_shadow_cleared")
+
 // Migration flag — set to true after the one-time import of the legacy external
 // subtype/timed per-habit SAF JSON files into the internal stores (2026-08-15).
 private val KEY_MIGRATION_SUBTYPE_TIMED_INTERNALIZED = booleanPreferencesKey("migration_subtype_timed_internalized")
@@ -1162,6 +1169,15 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setChessTimestampsTrimDone() {
         context.dataStore.edit { it[KEY_CHESS_TIMESTAMPS_TRIMMED] = true }
+    }
+
+    /** True after the one-time long-press shadowing-action cleanup has run. */
+    suspend fun isLongPressShadowCleared(): Boolean {
+        return context.dataStore.data.map { it[KEY_MIGRATION_LONG_PRESS_SHADOW_CLEARED] ?: false }.first()
+    }
+
+    suspend fun setLongPressShadowCleared() {
+        context.dataStore.edit { it[KEY_MIGRATION_LONG_PRESS_SHADOW_CLEARED] = true }
     }
 
     suspend fun isSubtypeTimedInternalized(): Boolean {

@@ -921,6 +921,36 @@ internal suspend fun HabitViewModel.performChessTimestampTrim() {
     }
 }
 
+/**
+ * One-time cleanup (Nov-23-2026): a habit with an app association whose
+ * STORED long-press action is "details" or "camera" (meal habits configured
+ * before the action system existed, or set and forgotten) never launches the
+ * associated app — the stored action silently shadows it. Drop those
+ * shadowing actions so the association (the "app" default) wins. "url"
+ * actions are untouched: they are explicit configurations, not defaults.
+ */
+internal suspend fun HabitViewModel.performLongPressShadowCleanup() {
+    try {
+        if (settingsRepo.isLongPressShadowCleared()) return
+        val s = _settings.value
+        val shadowed = s.habitLongPressActions.filterKeys { habitName ->
+            !s.habitAppAssociations[habitName].isNullOrEmpty()
+        }.filterValues { action ->
+            action == com.example.tail.data.LONG_PRESS_DETAILS ||
+                action == com.example.tail.data.LONG_PRESS_CAMERA
+        }
+        if (shadowed.isNotEmpty()) {
+            val cleaned = s.habitLongPressActions - shadowed.keys
+            settingsRepo.saveHabitLongPressActions(cleaned)
+            _settings.value = _settings.value.copy(habitLongPressActions = cleaned)
+            Log.i(TAG, "performLongPressShadowCleanup: cleared ${shadowed.keys.joinToString()}")
+        }
+        settingsRepo.setLongPressShadowCleared()
+    } catch (e: Exception) {
+        Log.e(TAG, "performLongPressShadowCleanup failed (will retry next load): ${e.message}")
+    }
+}
+
 // ── One-time Injury (episode) migration (2026-10-14) ──────────────────────
 
 /**
