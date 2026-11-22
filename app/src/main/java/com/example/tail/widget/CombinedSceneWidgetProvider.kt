@@ -106,6 +106,18 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                     .apply()
             }
 
+            /**
+             * Persists ONLY the habit name (self-heal path for a missing or
+             * stale name while the glass level stays valid). Writing the
+             * name alone must never resurrect a cleared glass: the level
+             * key is left untouched either way.
+             */
+            fun saveHabitNameOnly(context: Context, habitName: String) {
+                context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit().putString(KEY_HABIT, habitName)
+                    .apply()
+            }
+
             fun load(context: Context): Float? {
                 val v = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                     .getInt(KEY, -1)
@@ -230,11 +242,15 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
             val dayColor = tierColor(appContext, tiers.dayTier)
             val monthColor = tierColor(appContext, tiers.monthTier)
             val config = TierBarWidgetConfig.load(appContext)
-            val habitScreenCount = try {
+            // Whole settings snapshot (not just habitScreens.size): the
+            // water-glass tap zone below also needs waterHabits/waterDailyGoals
+            // as a fallback when the persisted habit name is missing/stale.
+            val settingsSnapshot = try {
                 kotlinx.coroutines.runBlocking {
                     SettingsRepository(appContext).settingsFlow.first()
-                }.habitScreens.size
-            } catch (_: Exception) { 0 }
+                }
+            } catch (_: Exception) { null }
+            val habitScreenCount = settingsSnapshot?.habitScreens?.size ?: 0
             val notifCount = try {
                 kotlinx.coroutines.runBlocking {
                     NotificationStore(appContext).notificationsFlow.first().size
@@ -271,14 +287,15 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
                 // Water-glass tap zone: visible only while the glass is
                 // drawn (a water-type habit with a valid goal exists). The
                 // tap deep-links into the grid with THAT habit's input
-                // dialog open — as if its square had been tapped. Falls
-                // back to a plain grid open when the persisted habit name
-                // isn't known yet (first-ever refresh hasn't landed).
+                // dialog open — as if its square had been tapped. The
+                // habit name is resolved with a settings fallback (see
+                // waterGlassPendingIntent) so a missing/stale persisted
+                // name can never degrade the tap to a plain grid open.
                 if (waterLevelFinal != null) {
                     setViewVisibility(R.id.scene_water_zone, android.view.View.VISIBLE)
                     setOnClickPendingIntent(
                         R.id.scene_water_zone,
-                        waterGlassPendingIntent(appContext)
+                        waterGlassPendingIntent(appContext, settingsSnapshot)
                     )
                 } else {
                     setViewVisibility(R.id.scene_water_zone, android.view.View.GONE)
@@ -436,13 +453,33 @@ class CombinedSceneWidgetProvider : AppWidgetProvider() {
         /**
          * Water-glass tap zone: deep-links into the grid with the water
          * habit's square auto-tapped (input dialog open). The habit NAME is
-         * read from [WaterLevelStore] at PendingIntent CREATION time (the
-         * RemoteViews path can't defer reads), and FLAG_UPDATE_CURRENT
-         * refreshes the extra on every widget rebind — it always matches
-         * the glass being drawn.
+         * resolved at PendingIntent CREATION time (the RemoteViews path
+         * can't defer reads), and FLAG_UPDATE_CURRENT refreshes the extra
+         * on every widget rebind — it always matches the glass being drawn.
+         *
+         * Resolution order, with self-healing: the persisted name
+         * ([WaterLevelStore]) wins when it still names a configured
+         * water-type habit; otherwise the FIRST configured water habit
+         * from [settingsSnapshot] is used AND written back to the store,
+         * so a missing/stale persisted name (pre-deep-link install
+         * upgrade, habit rename, prefs hiccup) can never silently degrade
+         * the tap into a plain grid open — the popup regression
+         * (2026-11-22: tap opened the app but not the water input).
          */
-        private fun waterGlassPendingIntent(context: Context): PendingIntent {
-            val habitName = WaterLevelStore.loadHabitName(context)
+        private fun waterGlassPendingIntent(
+            context: Context,
+            settingsSnapshot: com.example.tail.data.AppSettings?
+        ): PendingIntent {
+            val waterHabits = settingsSnapshot?.waterHabits ?: emptySet()
+            val waterGoals = settingsSnapshot?.waterDailyGoals ?: emptyMap()
+            val persisted = WaterLevelStore.loadHabitName(context)
+            val habitName = when {
+                !persisted.isNullOrBlank() && persisted in waterHabits -> persisted
+                // Self-heal: first configured water habit with a valid goal.
+                else -> waterHabits.firstOrNull {
+                    (waterGoals[it] ?: com.example.tail.data.DEFAULT_WATER_DAILY_GOAL) > 0
+                }?.also { WaterLevelStore.saveHabitNameOnly(context, it) }
+            }
             val intent = Intent(context, MainActivity::class.java).apply {
                 action = "com.example.tail.SCENE.WATER"
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)

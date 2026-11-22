@@ -1310,13 +1310,30 @@ fun HabitGridScreen(
     // shared square-tap dispatch above (type-correct input dialog, or a
     // plain increment for plain habits).
     androidx.compose.runtime.LaunchedEffect(deepLink.habitName, habitScreens, habits) {
-        val name = deepLink.habitName ?: return@LaunchedEffect
+        var name = deepLink.habitName ?: return@LaunchedEffect
         // Still loading (cold start): wait for screens/habits to arrive.
         if (habitScreens.isEmpty() && habits.isEmpty()) return@LaunchedEffect
-        val target = habits.firstOrNull { it.name == name }
-        if (target != null) {
+        var target = habits.firstOrNull { it.name == name }
+        // Stale-name fallback: the only producer of this deep link is the
+        // scene widget's water glass, whose persisted habit NAME can go
+        // stale (habit renamed/deleted since the widget last refreshed).
+        // Retarget to a still-configured water habit instead of silently
+        // dropping the request — the "app opens but no water popup"
+        // regression (2026-11-22). The fallback is deterministic, so the
+        // post-switchScreen re-run of this effect resolves the same habit.
+        if (target == null && name !in settings.waterHabits) {
+            val fallback = settings.waterHabits.firstOrNull { fb ->
+                habits.any { it.name == fb }
+            } ?: settings.waterHabits.firstOrNull()
+            if (fallback != null && fallback != name) {
+                name = fallback
+                target = habits.firstOrNull { it.name == name }
+            }
+        }
+        val resolved = target
+        if (resolved != null) {
             deepLink.habitName = null
-            handleHabitTap(target, habits.indexOf(target))
+            handleHabitTap(resolved, habits.indexOf(resolved))
             return@LaunchedEffect
         }
         val screenIdx = habitScreens.indexOfFirst { name in it.habitNames }
