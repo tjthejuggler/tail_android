@@ -127,6 +127,25 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Launcher role: system back at the root of the home task must NOT
+        // finish the home activity — Android would instantly relaunch it
+        // (full recreate; stateNotNeeded discards the saved state), which the
+        // user sees as a pointless reload + loading spinner while staying on
+        // the same screen. The launcher-standard behaviour is to hide the
+        // task instead: moveTaskToBack surfaces whatever task is underneath
+        // — i.e. the app the user was in before pressing home — with Tail's
+        // state frozen intact for the next home press. Registered here in
+        // onCreate so every Compose-level handler (nav stack pops, dialog
+        // dismissals) outranks it; this is only the final fallback.
+        onBackPressedDispatcher.addCallback(
+            this,
+            object : androidx.activity.OnBackPressedCallback(true) {
+                override fun handleOnBackPressed() {
+                    moveTaskToBack(true)
+                }
+            }
+        )
+
         // Habit-ask notifications (movie bridge + scheduled asks) need the
         // runtime POST_NOTIFICATIONS permission on Android 13+; request it
         // once on first launch.
@@ -300,8 +319,18 @@ private fun TailApp(
     // the Smart Open guess instead: resolve the contextually-best habit
     // screen on IO and hand it to the grid like a deep link. Explicit
     // extras always win; a no-confidence guess falls through silently.
+    //
+    // allowSmartOpen: false for warm onNewIntent deliveries of system HOME /
+    // launcher-icon taps. With the old `standard` launch mode those never
+    // reached the running activity (the task was simply brought forward);
+    // now that MainActivity is also the HOME activity (singleTask), the
+    // system routes every home press here, and re-running Smart Open would
+    // yank the user off their current screen. Skipping them for warm
+    // deliveries preserves the exact old behaviour: home press / icon tap
+    // resumes the last screen; a COLD open (fresh process — the post-unlock
+    // entry path) still gets the Smart Open guess.
     val smartOpenScope = androidx.compose.runtime.rememberCoroutineScope()
-    val handleOpenIntent: (android.content.Intent) -> Unit = { intent ->
+    val handleOpenIntent: (android.content.Intent, Boolean) -> Unit = { intent, allowSmartOpen ->
         var explicit = false
         intent.getStringExtra(MainActivity.EXTRA_OPEN_ROUTE)?.let { route ->
             explicit = true
@@ -325,7 +354,14 @@ private fun TailApp(
                 MainActivity.NotificationsDeepLink.habitName = name
             }
         }
-        if (!explicit && MainActivity.SmartOpenGate.shouldHandle(intent)) {
+        val isSystemHomeOrIconTap =
+            intent.action == android.content.Intent.ACTION_MAIN &&
+                (
+                    intent.hasCategory(android.content.Intent.CATEGORY_HOME) ||
+                        intent.hasCategory(android.content.Intent.CATEGORY_LAUNCHER)
+                    )
+        val skipSmartOpen = !allowSmartOpen && isSystemHomeOrIconTap
+        if (!explicit && !skipSmartOpen && MainActivity.SmartOpenGate.shouldHandle(intent)) {
             smartOpenScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val idx = com.example.tail.data.SmartOpenStore.resolveForLaunch(context)
                 if (idx >= 0) MainActivity.NotificationsDeepLink.screenIndex = idx
@@ -335,10 +371,12 @@ private fun TailApp(
     val activity = context as? androidx.activity.ComponentActivity
     if (activity != null) {
         androidx.compose.runtime.LaunchedEffect(activity) {
-            activity.intent?.let { handleOpenIntent(it) }
+            activity.intent?.let { handleOpenIntent(it, true) }
         }
         androidx.compose.runtime.DisposableEffect(activity) {
-            val listener = androidx.core.util.Consumer<android.content.Intent> { handleOpenIntent(it) }
+            val listener = androidx.core.util.Consumer<android.content.Intent> {
+                handleOpenIntent(it, false)
+            }
             activity.addOnNewIntentListener(listener)
             onDispose { activity.removeOnNewIntentListener(listener) }
         }
