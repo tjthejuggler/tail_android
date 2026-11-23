@@ -1757,9 +1757,9 @@ fun HabitViewModel.saveWeightsEntry(
     val uriString = _settings.value.fileUri
     if (uriString.isNullOrEmpty()) return
 
-    // All-time PR check BEFORE the slot write: the DB-derived PB below is
-    // the day-max JOINED to the exercise BEFORE this set lands, i.e. the
-    // standing historical record this set is judged against.
+    // All-time PR check BEFORE the slot write: the PB below (per-set
+    // records, with the pre-sidecar DB day-max as fallback) is the standing
+    // historical record this set is judged against.
     val logDate = _selectedDate.value
     val trimmedExercise = exerciseName.trim()
     val prMeta = if (trimmedExercise.isNotBlank()) {
@@ -1923,14 +1923,15 @@ internal fun HabitViewModel.checkWeightsVolumeRecords(
 }
 
 /**
- * One exercise's best (heaviest) and most recent set for a weights habit,
- * computed from the habits-DB day slots joined with the per-day exercise
- * names. Dates are included so the popup can show WHEN each happened.
+ * One exercise's best (heaviest) and most recent set for a weights habit.
+ * Primary source is the per-set sidecar, so the PB pairs the heaviest
+ * single-set weight with THAT set's reps. Dates are included so the popup
+ * can show WHEN each happened.
  */
 data class WeightsExerciseStats(
     /** Heaviest weight ever logged for this exercise, in grams (0 = none). */
     val pbWeightGrams: Int = 0,
-    /** Reps logged on the PB day. */
+    /** Reps done on the PB (heaviest) set. */
     val pbReps: Int = 0,
     /** Date the PB was set, or null when no PB exists. */
     val pbDate: LocalDate? = null,
@@ -1943,43 +1944,83 @@ data class WeightsExerciseStats(
 )
 
 /**
- * Personal best (heaviest weight) and most recent set for [exerciseName] on
- * a weights habit: the habit's day slots joined with the per-day exercise-
- * name records. Weight slots keep the day's HEAVIEST gram value (max-merge),
- * so the PB is the heaviest single-set weight ever entered for the exercise.
- * Days without a name record (logged before the sidecar existed) are skipped.
+ * Personal best (heaviest set) and most recent set for [exerciseName] on a
+ * weights habit.
+ *
+ * Primary source: the per-set sidecar ([_weightsSets]) — every popup
+ * submission records ONE set, so the PB pairs the heaviest single-set
+ * weight with THAT set's reps. The DB reps slot instead ACCUMULATES across
+ * the day's sets, which is why it must not be joined onto the day-max
+ * weight here (100×2 + 80×10 would read as "12 reps @ 100").
+ *
+ * Fallback: the habits-DB day slots joined with the per-day exercise names,
+ * for days logged before the per-set sidecar existed. Those days only have
+ * day-aggregated values (day-max weight × day-total reps) — the best
+ * pairing available. Days covered by the sidecar are excluded from the
+ * fallback so they are never double-counted.
  */
 fun HabitViewModel.getWeightsExerciseStats(
     habitName: String,
     exerciseName: String,
     machine: Boolean
 ): WeightsExerciseStats {
-    if (exerciseName.isBlank()) return WeightsExerciseStats()
+    val needle = exerciseName.trim()
+    if (needle.isEmpty()) return WeightsExerciseStats()
+
+    // ── Primary: per-set records (true weight×reps pairing) ─────────────
+    val setsByDate = _weightsSets.value[habitName] ?: emptyMap()
+    var pbGrams = 0; var pbReps = 0; var pbDate: LocalDate? = null
+    var lastGrams = 0; var lastReps = 0; var lastDateStr: String? = null
+    for ((dateStr, daySets) in setsByDate) {
+        val matching = daySets.filter {
+            it.machine == machine &&
+                it.exercise.trim().equals(needle, ignoreCase = true) &&
+                (it.weightGrams > 0 || it.reps > 0)
+        }
+        if (matching.isEmpty()) continue
+        if (lastDateStr == null || dateStr > lastDateStr) {
+            val last = matching.last()
+            lastGrams = last.weightGrams; lastReps = last.reps; lastDateStr = dateStr
+        }
+        for (set in matching) {
+            // PB = heaviest set; on a weight tie the set with more reps
+            // tells the better story. Weight-0 sets can only "tie" a 0 PB
+            // (reps-only logging), so they never displace a weighted PB.
+            if (set.weightGrams > pbGrams ||
+                (set.weightGrams == pbGrams && set.reps > pbReps)
+            ) {
+                pbGrams = set.weightGrams; pbReps = set.reps; pbDate = parseDate(dateStr)
+            }
+        }
+    }
+
+    // ── Fallback: DB day slots, pre-sidecar days only ───────────────────
     val typeKey = if (machine) com.example.tail.data.WeightsExerciseRepository.KEY_MACHINE
                   else com.example.tail.data.WeightsExerciseRepository.KEY_FREE
     val weightKey = if (machine) com.example.tail.data.secondaryValueKey(habitName)
                     else com.example.tail.data.secondaryValueSlotKey(habitName, 3)
     val repsKey = if (machine) com.example.tail.data.secondaryValueSlotKey(habitName, 2)
                   else com.example.tail.data.secondaryValueSlotKey(habitName, 4)
-    val weights = cachedPhoneDb[weightKey] ?: return WeightsExerciseStats()
+    val weights = cachedPhoneDb[weightKey] ?: emptyMap()
     val repsByDate = cachedPhoneDb[repsKey] ?: emptyMap()
     val namesByDate = _weightsExerciseNames.value[habitName] ?: emptyMap()
-
-    var pbGrams = 0; var pbReps = 0; var pbDate: LocalDate? = null
-    var lastGrams = 0; var lastReps = 0; var lastDate: LocalDate? = null
     for ((dateStr, grams) in weights) {
+        if (setsByDate.containsKey(dateStr)) continue // sidecar covers this day
         val named = namesByDate[dateStr]?.get(typeKey) ?: continue
-        if (!named.equals(exerciseName, ignoreCase = true)) continue
+        if (!named.equals(needle, ignoreCase = true)) continue
         val dayReps = repsByDate[dateStr] ?: 0
         if (grams <= 0 && dayReps <= 0) continue
-        if (lastDate == null || dateStr > com.example.tail.data.dateString(lastDate)) {
-            lastGrams = grams; lastReps = dayReps; lastDate = parseDate(dateStr)
+        if (lastDateStr == null || dateStr > lastDateStr) {
+            lastGrams = grams; lastReps = dayReps; lastDateStr = dateStr
         }
         if (grams > pbGrams) {
             pbGrams = grams; pbReps = dayReps; pbDate = parseDate(dateStr)
         }
     }
-    return WeightsExerciseStats(pbGrams, pbReps, pbDate, lastGrams, lastReps, lastDate)
+    return WeightsExerciseStats(
+        pbGrams, pbReps, pbDate,
+        lastGrams, lastReps, lastDateStr?.let { parseDate(it) }
+    )
 }
 
 
