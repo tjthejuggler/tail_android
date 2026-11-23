@@ -231,13 +231,18 @@ fun MapScreen(
         insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
         onDispose {
+            // Restore system bars FIRST: they must already be visible when
+            // the rotation back to portrait lands, or the window can keep
+            // its stale landscape frame with zero status-bar insets — the
+            // grid then lays out shifted left/up after returning (2026-11-23
+            // drift bug). Doing the orientation flip first raced the frame
+            // recomputation against the bar re-show.
+            insetsController?.show(WindowInsetsCompat.Type.systemBars())
+            insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
             // Restore whatever orientation policy was in effect before we entered.
             if (activity != null && previousOrientation != null) {
                 activity.requestedOrientation = previousOrientation
             }
-            // Restore system bars
-            insetsController?.show(WindowInsetsCompat.Type.systemBars())
-            insetsController?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
         }
     }
 

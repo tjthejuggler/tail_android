@@ -885,20 +885,35 @@ fun HabitGridScreen(
         }
     }
 
-    // Returning from the world-map screen (which hides the system bars for
-    // immersive mode) can leave the window's insets in their hidden state —
-    // the whole grid then laid out shifted up under the status bar. Force
-    // the bars visible every time this screen (re)enters composition so the
-    // status-bar insets are reported again and the date selector sits below
-    // the system bar as usual. Idempotent when bars are already shown.
+    // Returning from the world-map screen (which hides the system bars and
+    // rotates to landscape) can leave the window with a STALE pre-rotation
+    // frame and zero status-bar insets: the whole grid then lays out shifted
+    // up under the status bar and left, with a dead strip on the right edge
+    // (2026-11-23 drift bug). The manifest handles rotation via configChanges
+    // (no activity recreation), so nothing automatically re-asserts the
+    // window frame — do it here: bars visible, behaviour restored, and the
+    // decor asked to re-dispatch its insets + relayout, deferred one frame so
+    // it lands after MapScreen's dispose (bar show → orientation restore).
     DisposableEffect(Unit) {
         val window = activity?.window
+        val decor = window?.decorView
         val insetsController = window?.let {
             androidx.core.view.WindowInsetsControllerCompat(it, it.decorView)
         }
-        insetsController?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-        insetsController?.systemBarsBehavior =
-            androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+        // One frame later: MapScreen's onDispose (system-bar show +
+        // orientation restore) runs during this screen's composition; doing
+        // the re-show in the same frame can still race it.
+        decor?.post {
+            insetsController?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            insetsController?.systemBarsBehavior =
+                androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
+            // Force the inset dispatch + layout pass that actually rebuilds
+            // the window frame (the plain show() alone did not always
+            // trigger it — that was the earlier incomplete band-aid).
+            decor.requestApplyInsets()
+            decor.requestLayout()
+            decor.invalidate()
+        }
         onDispose { }
     }
 

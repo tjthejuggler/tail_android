@@ -2,6 +2,7 @@ package com.example.tail.ui.settings
 
 import android.content.Context
 import android.content.Intent
+import kotlin.system.exitProcess
 import android.graphics.Typeface
 import android.net.Uri
 import android.util.Log
@@ -47,6 +48,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Wallpaper
@@ -562,6 +564,18 @@ fun SettingsScreen(
                     ResticRestoreSection(viewModel = viewModel)
                 }
             }
+
+            // ── App Maintenance ────────────────────────────────────────────────
+            item {
+                SettingsCategory(
+                    title = "App Maintenance",
+                    summary = "Full process restart for UI glitches (drift, stuck insets)",
+                    icon = Icons.Filled.Refresh,
+                    accent = BorderWhiteBlue
+                ) {
+                    RestartAppSection(context = context)
+                }
+            }
         }
     }
 
@@ -763,6 +777,85 @@ private fun SettingsSubSectionDivider() {
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f),
         thickness = 0.5.dp
     )
+}
+
+/**
+ * Full-process restart sub-section. Tail is the launcher (no "close and
+ * reopen"), so when a UI glitch like the 2026-11-23 layout drift happens the
+ * only escape used to be adb. This kills the process and relaunches
+ * MainActivity via an AlarmManager broadcast ~150 ms later — a REAL restart
+ * (new process, fresh Compose state, fresh window insets), not just a
+ * navigation reset.
+ */
+@Composable
+private fun RestartAppSection(context: Context) {
+    var showConfirm by remember { mutableStateOf(false) }
+
+    Column {
+        Text("Restart App", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(
+            text = "Kills the app process and relaunches it fresh. Use when the UI " +
+                   "glitches (layout drift, controls stuck under the system bar) — " +
+                   "anything that looks wrong and a home-press reset didn't fix.",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Button(
+            onClick = { showConfirm = true },
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer
+            )
+        ) {
+            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Restart app now")
+        }
+    }
+
+    if (showConfirm) {
+        AlertDialog(
+            onDismissRequest = { showConfirm = false },
+            title = { Text("Restart the app?") },
+            text = { Text("The app process will be killed and relaunched. Any unsaved " +
+                          "in-progress input (half-typed logs, open dialogs) is lost — " +
+                          "logged habits are already saved.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showConfirm = false
+                    restartApp(context)
+                }) { Text("Restart") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+/** Kill + relaunch the whole app process (see [RestartAppSection]). */
+private fun restartApp(context: Context) {
+    val intent = Intent(context, com.example.tail.MainActivity::class.java).apply {
+        addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or
+            Intent.FLAG_ACTIVITY_CLEAR_TASK or
+            Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+        )
+    }
+    // Start the fresh activity FIRST, while the app is still foreground —
+    // an alarm/PendingIntent relaunch fired after the process died gets
+    // blocked by background-activity-start restrictions on recent Android
+    // (observed on a Samsung device, 2026-11-23: new process came up but
+    // stayed buried behind other apps). The start transaction is already
+    // recorded in system_server when startActivity returns.
+    context.startActivity(intent)
+    // A beat so the start lands, then take the process down. system_server
+    // sees the hosting process die with a pending activity start and brings
+    // MainActivity up again in a brand-new process — a full, clean restart.
+    android.os.Handler(context.mainLooper).postDelayed({
+        exitProcess(0)
+    }, 200)
 }
 
 /**
