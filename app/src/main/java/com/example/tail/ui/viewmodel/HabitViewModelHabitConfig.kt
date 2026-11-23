@@ -946,8 +946,14 @@ fun HabitViewModel.setCustomInputAmounts(habitName: String, amounts: List<Int>) 
  * Records [amount] as the most recently used increment for [habitName].
  * Keeps up to 3 unique recent amounts, most recent first.
  */
-fun HabitViewModel.recordRecentIncrementAmount(habitName: String, amount: Int) {
+fun HabitViewModel.recordRecentIncrementAmount(
+    habitName: String,
+    amount: Int,
+    /** True when the increment was stamped "now" (today) — also feeds the exact amount log. */
+    recordExact: Boolean = true
+) {
     viewModelScope.launch {
+        if (recordExact) amountLogRepo.record(habitName, amount)
         val current = _settings.value.customInputRecentAmounts.toMutableMap()
         val existing = current[habitName]?.toMutableList() ?: mutableListOf()
         existing.remove(amount)          // remove duplicate if present

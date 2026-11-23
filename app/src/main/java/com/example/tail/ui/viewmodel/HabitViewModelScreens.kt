@@ -1960,6 +1960,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             
             // Rename in the internal timestamp file so historical timestamps survive
             timestampRepo.renameHabit(oldName, newName)
+            amountLogRepo.renameHabit(oldName, newName)
 
             // Rename in the internal subtype/timed stores so breakdowns and
             // timed sessions survive the rename too

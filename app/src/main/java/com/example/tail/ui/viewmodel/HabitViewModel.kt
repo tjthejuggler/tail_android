@@ -254,6 +254,9 @@ class HabitViewModel(
     /** Repository for recording habit increment timestamps (internal storage). */
     val timestampRepo = HabitTimestampRepository(context)
 
+    /** Exact per-increment custom amounts (water ml, …) — feeds the suggestion engine. */
+    val amountLogRepo = com.example.tail.data.AmountLogRepository(context)
+
     /** Repository for daily environment snapshots (weather/air/pollen/Kp/water). */
     val environmentRepo = com.example.tail.data.environment.EnvironmentRepository(context)
 

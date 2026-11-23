@@ -42,10 +42,12 @@ enum class SuggestionKind {
     CUSTOM_AMOUNT,
     /** Text-input habit — ✓ saves the pre-filled text entry (✎ opens the dialog with it typed in). */
     TEXT,
-    /** Subtyped habit — ✓ increments the default subtype (✎ opens the subtype dialog). */
+    /** Subtyped habit — ✓ increments the predicted subtype by [HabitSuggestion.amount] (✎ opens the subtype dialog). */
     SUBTYPE,
     /** Weights habit — no one-tap increment; ✎ opens the weights logging dialog. */
-    WEIGHTS
+    WEIGHTS,
+    /** Pill-log habit — ✓ logs the predicted pill bundle ([HabitSuggestion.pills]); ✎ opens the pill dialog. */
+    PILLS
 }
 
 /**
@@ -61,6 +63,8 @@ data class HabitSuggestion(
     val subtype: String? = null,
     /** Pre-filled text (TEXT). */
     val text: String? = null,
+    /** Pill → servings bundle (PILLS). */
+    val pills: Map<String, Int>? = null,
     /** Short human-readable reason ("usual around 09:15"). */
     val reason: String
 )
@@ -187,8 +191,11 @@ private fun SuggestionCard(
         Text(
             text = when (suggestion.kind) {
                 SuggestionKind.WEIGHTS -> "opens weight logging"
-                SuggestionKind.TEXT -> "“${suggestion.text?.take(40)}”"
-                SuggestionKind.SUBTYPE -> "+1 ${suggestion.subtype}"
+                SuggestionKind.TEXT -> "“${suggestion.text?.take(40)?.replace('\n', '·')}”"
+                SuggestionKind.SUBTYPE -> "+${suggestion.amount} ${suggestion.subtype}"
+                SuggestionKind.PILLS -> suggestion.pills.orEmpty().entries.joinToString(" · ") { (p, n) ->
+                    if (n > 1) "$p ×$n" else p
+                }
                 SuggestionKind.CUSTOM_AMOUNT -> "+${suggestion.amount}"
                 SuggestionKind.PLAIN -> "+${suggestion.amount}"
             },
@@ -229,6 +236,7 @@ private fun SuggestionCard(
             if (suggestion.kind == SuggestionKind.TEXT ||
                 suggestion.kind == SuggestionKind.SUBTYPE ||
                 suggestion.kind == SuggestionKind.WEIGHTS ||
+                suggestion.kind == SuggestionKind.PILLS ||
                 suggestion.kind == SuggestionKind.CUSTOM_AMOUNT
             ) {
                 Box(

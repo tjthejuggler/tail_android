@@ -182,6 +182,7 @@ import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.encodeShortcutEntry
 import com.example.tail.data.findShortcutInfo
 import com.example.tail.ui.viewmodel.buildHabitSuggestions
+import com.example.tail.ui.viewmodel.habitForSuggestion
 import com.example.tail.ui.viewmodel.setSuggestionExcluded
 import com.example.tail.ui.viewmodel.incrementHabit
 import com.example.tail.ui.viewmodel.incrementCustomAmount
@@ -982,6 +983,15 @@ fun HabitGridScreen(
     // not a fresh per-screen flash — wins (tap a screen tab: popup closes AND
     // the tab's screen opens, without the popup popping back up).
     var suggestionOutsideTapScreen by remember { mutableStateOf(-1) }
+    // Screen index the USER just navigated to (tab tap / swipe). Only a
+    // user-initiated switch triggers the per-screen suggestion flash; the
+    // automatic switches (cold-start restore of the saved screen, smart-open,
+    // widget deep links) must leave the app-wide app-open flash alone.
+    var suggestionUserNavTarget by remember { mutableStateOf(-1) }
+    val userSwitchScreen: (Int) -> Unit = { idx ->
+        if (idx != activeScreenIndex) suggestionUserNavTarget = idx
+        viewModel.switchScreen(idx)
+    }
     // Window-space bounds of the suggestion flash popup and the screen root's
     // origin — used by the root pointer observer (Initial pass) to detect taps
     // OUTSIDE the flash without any overlay, so taps pass through untouched.
@@ -1806,7 +1816,7 @@ fun HabitGridScreen(
                         if (editMode && idx == activeScreenIndex) {
                             renamingScreenIndex = idx
                         } else {
-                            viewModel.switchScreen(idx)
+                            userSwitchScreen(idx)
                         }
                     },
                     onReorderScreen = { from, to ->
@@ -1972,11 +1982,11 @@ fun HabitGridScreen(
                                     when {
                                         totalDragX < -swipeThreshold -> {
                                             val next = (activeScreenIndex + 1) % habitScreens.size
-                                            viewModel.switchScreen(next)
+                                            userSwitchScreen(next)
                                         }
                                         totalDragX > swipeThreshold -> {
                                             val prev = (activeScreenIndex - 1 + habitScreens.size) % habitScreens.size
-                                            viewModel.switchScreen(prev)
+                                            userSwitchScreen(prev)
                                         }
                                     }
                                 },
@@ -2471,9 +2481,17 @@ fun HabitGridScreen(
     // history, minus meal / special-flow / automatically-incremented habits
     // and (for 1-max binaries) already-done ones. See
     // HabitViewModelSuggestions.kt and SuggestionFlash.kt.
-    LaunchedEffect(settings.suggestionFlashEnabled, isLoading, isToday, suggestionsRequested) {
+    LaunchedEffect(
+        settings.suggestionFlashEnabled, isLoading, isToday, suggestionsRequested,
+        deepLink.screenIndex
+    ) {
         if (suggestionsRequested || isLoading || !isToday) return@LaunchedEffect
         if (!settings.suggestionFlashEnabled) return@LaunchedEffect
+        // A pending smart-open / widget screen switch hasn't been applied yet —
+        // wait for it so "what is on screen" is known when suggestions are built.
+        if (deepLink.screenIndex >= 0) return@LaunchedEffect
+        // Let the persisted active screen finish restoring (async settings sync).
+        kotlinx.coroutines.delay(350)
         suggestionsRequested = true
         viewModel.buildHabitSuggestions { built ->
             suggestions = built
@@ -2520,18 +2538,14 @@ fun HabitGridScreen(
         }
     }
     // ── Per-screen suggestion flash ────────────────────────────────────────
-    // On every switch to a different habits grid screen (tab tap or swipe),
-    // rebuild the suggestions scoped to that screen only — the same scoring,
-    // restricted to the habits that live on the newly shown screen. The very
-    // first run only arms the effect (the app-open flash is the global build
-    // above); every subsequent activeScreenIndex change rebuilds.
-    var suggestionScreenSwitchArmed by remember { mutableStateOf(false) }
+    // When the USER navigates to a different habits grid screen (tab tap or
+    // swipe — see [userSwitchScreen]), rebuild the suggestions scoped to that
+    // screen only. Automatic switches (cold-start restore, smart-open, deep
+    // links) never reach here, so the app-open flash stays app-wide.
     LaunchedEffect(activeScreenIndex, habitScreens.size, isLoading, isToday) {
         if (isLoading || !isToday || habitScreens.size < 2) return@LaunchedEffect
-        if (!suggestionScreenSwitchArmed) {
-            suggestionScreenSwitchArmed = true
-            return@LaunchedEffect
-        }
+        if (suggestionUserNavTarget != activeScreenIndex) return@LaunchedEffect
+        suggestionUserNavTarget = -1
         if (!settings.suggestionFlashEnabled) return@LaunchedEffect
         if (editMode || graphMode || scheduleMode) return@LaunchedEffect
         // An outside-tap dismissal on this same screen wins over the rebuild:
@@ -2575,11 +2589,24 @@ fun HabitGridScreen(
                     suggestionConfirming = true
                     when (s.kind) {
                         SuggestionKind.TEXT -> viewModel.saveTextEntries(
-                            s.habitName, listOf(s.text ?: ""), null, java.time.LocalTime.now()
+                            s.habitName,
+                            // Multi-option groupings are stored '\n'-joined.
+                            (s.text ?: "").split('\n').map { it.trim() }.filter { it.isNotEmpty() },
+                            null, java.time.LocalTime.now()
                         )
                         SuggestionKind.SUBTYPE -> viewModel.saveSubtypeIncrement(
-                            s.habitName, mapOf((s.subtype ?: return@SuggestionFlash) to 1)
+                            s.habitName,
+                            mapOf((s.subtype ?: return@SuggestionFlash) to s.amount.coerceAtLeast(1))
                         )
+                        SuggestionKind.PILLS -> viewModel.savePillLines(
+                            s.habitName, java.time.LocalDate.now(),
+                            s.pills.orEmpty().flatMap { (pill, n) -> List(n.coerceAtLeast(1)) { pill } }
+                        )
+                        SuggestionKind.CUSTOM_AMOUNT -> {
+                            viewModel.incrementCustomAmount(s.habitName, s.amount, recordTimestamp = true)
+                            viewModel.checkRecordNotificationTotal(s.habitName, s.amount)
+                            viewModel.recordRecentIncrementAmount(s.habitName, s.amount)
+                        }
                         else -> viewModel.incrementHabit(s.habitName, s.amount)
                     }
                     lizardShimmerGen.intValue++
@@ -2588,8 +2615,19 @@ fun HabitGridScreen(
                 },
                 onEdit = { s ->
                     suggestionFlashVisible = false
+                    // Suggestions span all screens: resolve the habit from any screen.
                     val habit = habits.firstOrNull { it.name == s.habitName }
+                        ?: viewModel.habitForSuggestion(s.habitName)
                     when (s.kind) {
+                        SuggestionKind.PILLS -> if (habit != null) {
+                            viewModel.loadPillDay(habit.name, java.time.LocalDate.now()) { pillDialogToday = it }
+                            viewModel.loadPillOptions(habit.name) { pills, catalog ->
+                                pillDialogCatalogPills = pills
+                                pillDialogCatalog = catalog
+                            }
+                            viewModel.loadPillSuggestions(habit.name) { pillDialogSuggestions = it }
+                            pillDialogHabit = habit
+                        }
                         SuggestionKind.TEXT -> {
                             if (habit != null) {
                                 openTextInputDialog(
@@ -2610,7 +2648,7 @@ fun HabitGridScreen(
                         }
                         SuggestionKind.SUBTYPE -> viewModel.loadSubtypeBreakdown(s.habitName) { breakdown ->
                             subtypeDialogBreakdown = breakdown
-                            subtypeDialogHabit = habits.firstOrNull { it.name == s.habitName }
+                            subtypeDialogHabit = habit
                         }
                         SuggestionKind.WEIGHTS -> weightsDialogHabit = habit
                         SuggestionKind.CUSTOM_AMOUNT -> { if (habit != null) dialogHabit = habit }
@@ -3150,7 +3188,7 @@ fun HabitGridScreen(
                 // judged day (day-total record semantics).
                 viewModel.incrementCustomAmount(habit.name, amount, recordTimestamp = isToday)
                 viewModel.checkRecordNotificationTotal(habit.name, amount)
-                viewModel.recordRecentIncrementAmount(habit.name, amount)
+                viewModel.recordRecentIncrementAmount(habit.name, amount, recordExact = isToday)
                 dialogHabit = null
                 // Popup-gated increment: the lizard shimmer fires only now,
                 // when the custom-amount dialog is actually submitted — not

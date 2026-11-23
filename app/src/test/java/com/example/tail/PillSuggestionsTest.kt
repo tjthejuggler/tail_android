@@ -142,6 +142,54 @@ class PillSuggestionsTest {
     }
 
     @Test
+    fun `varying bundle yields a consensus chip instead of the last exact grouping`() {
+        // Omega + Zinc + B12 every morning; a 4th pill (C 1g) only on 2 of 12 days,
+        // including yesterday. The old "most recent grouping" logic led with the C bundle.
+        val log = mutableMapOf<String, String>()
+        for (d in 1L..12L) {
+            if (d == 1L || d == 6L) submit(log, today.minusDays(d), 8, 0, "Omega", "Zinc", "B12", "C 1g")
+            else submit(log, today.minusDays(d), 8, 0, "Omega", "Zinc", "B12")
+        }
+
+        val top = buildPillSuggestions(log, catalog, LocalTime.of(8, 20), today).first()
+
+        assertEquals(
+            setOf("Omega-3 Sunday Natural", "Zinc", "B12"),
+            top.counts.keys
+        )
+    }
+
+    @Test
+    fun `evening pills are not suggested in the morning`() {
+        val log = mutableMapOf<String, String>()
+        for (d in 1L..10L) {
+            submit(log, today.minusDays(d), 8, 0, "Omega")
+            submit(log, today.minusDays(d), 21, 30, "Zinc")
+        }
+
+        val morning = buildPillSuggestions(log, catalog, LocalTime.of(8, 10), today)
+
+        assertTrue(morning.first().counts.keys == setOf("Omega-3 Sunday Natural"))
+    }
+
+    @Test
+    fun `weekend-only pill is not suggested on a weekday`() {
+        // today = Sunday 2026-11-08 → pick a weekday "today" instead.
+        val monday = LocalDate.of(2026, 11, 9)
+        val log = mutableMapOf<String, String>()
+        for (d in 1L..42L) {
+            val day = monday.minusDays(d)
+            val weekend = day.dayOfWeek.value >= 6
+            if (weekend) submit(log, day, 9, 0, "Omega", "Zinc")
+            else submit(log, day, 9, 0, "Omega")
+        }
+
+        val top = buildPillSuggestions(log, catalog, LocalTime.of(9, 10), monday).first()
+
+        assertEquals(setOf("Omega-3 Sunday Natural"), top.counts.keys)
+    }
+
+    @Test
     fun `partially served count still suggests the full bundle`() {
         // Bundle says Omega ×2; only 1 Omega logged today → not satisfied,
         // bundle survives the filter and the chip prefills the remainder.
