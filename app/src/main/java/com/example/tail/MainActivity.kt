@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -41,6 +42,7 @@ import com.example.tail.ui.experiment.ExperimentFlashOverlay
 import com.example.tail.ui.grid.HabitGridScreen
 import com.example.tail.ui.map.MapScreen
 import com.example.tail.ui.viewmodel.navigateToDate
+import com.example.tail.ui.viewmodel.resetToHomeGrid
 import com.example.tail.ui.settings.SettingsScreen
 import com.example.tail.ui.stats.AppStatsScreen
 import com.example.tail.ui.stats.MapStatsScreen
@@ -111,6 +113,33 @@ class MainActivity : ComponentActivity() {
             set(value) { _habitName.value = value }
     }
 
+    /** Home-button reset signal (Tail is the launcher, 2026-11-23): every
+     *  warm system HOME press must land on the plain main grid. TailApp
+     *  bumps [generation] after resetting the ViewModel-level mode state;
+     *  the ROUTE_GRID destination keys the HabitGridScreen subtree on it,
+     *  so the bump disposes and recreates the grid — dropping all
+     *  composable-local dialog / popup state that the ViewModel can't
+     *  reach. */
+    object HomeResetSignal {
+        private val _generation = androidx.compose.runtime.mutableIntStateOf(0)
+        val generation: Int get() = _generation.intValue
+
+        /** One-shot: true exactly for the grid instance created by the most
+         *  recent home reset (consumed on first read). Without this, the
+         *  recreated grid would rebuild the increment-suggestion flash
+         *  ~350 ms after the home press — home must land on the PLAIN
+         *  grid, not re-pop a popup. */
+        @Volatile private var suppressFlashOnce = false
+        fun bump() {
+            _generation.intValue += 1
+            suppressFlashOnce = true
+        }
+        fun consumeSuppressFlash(): Boolean {
+            val v = suppressFlashOnce
+            suppressFlashOnce = false
+            return v
+        }
+    }
     /** Dedup gate for Smart Open: a config-change recreation redelivers the
      *  SAME intent instance, and it must not re-trigger the smart-open
      *  guess (which would yank the user off their current screen on
@@ -123,6 +152,7 @@ class MainActivity : ComponentActivity() {
             return true
         }
     }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -325,9 +355,10 @@ private fun TailApp(
     // reached the running activity (the task was simply brought forward);
     // now that MainActivity is also the HOME activity (singleTask), the
     // system routes every home press here, and re-running Smart Open would
-    // yank the user off their current screen. Skipping them for warm
-    // deliveries preserves the exact old behaviour: home press / icon tap
-    // resumes the last screen; a COLD open (fresh process — the post-unlock
+    // yank the user off their current screen. Warm deliveries instead get
+    // the home reset (below): home press / icon tap lands on the PLAIN main
+    // grid — stacked screens popped, edit/graph/schedule modes exited,
+    // date snapped to today. A COLD open (fresh process — the post-unlock
     // entry path) still gets the Smart Open guess.
     val smartOpenScope = androidx.compose.runtime.rememberCoroutineScope()
     val handleOpenIntent: (android.content.Intent, Boolean) -> Unit = { intent, allowSmartOpen ->
@@ -361,6 +392,20 @@ private fun TailApp(
                         intent.hasCategory(android.content.Intent.CATEGORY_LAUNCHER)
                     )
         val skipSmartOpen = !allowSmartOpen && isSystemHomeOrIconTap
+        // Warm HOME press (Tail is the launcher): always land on the plain
+        // main grid. Pop any stacked screens (settings/map/stats/...), exit
+        // the ViewModel-level modes (edit/graph/schedule), snap date +
+        // screen tab back to defaults, and bump the reset generation so the
+        // grid subtree is recreated without its open dialogs/popups.
+        // Guarded by !explicit so genuine deep links (which carry extras)
+        // always win over the reset.
+        if (!allowSmartOpen && !explicit && isSystemHomeOrIconTap) {
+            if (navController.currentDestination?.route != ROUTE_GRID) {
+                navController.popBackStack(ROUTE_GRID, inclusive = false)
+            }
+            viewModel.resetToHomeGrid()
+            MainActivity.HomeResetSignal.bump()
+        }
         if (!explicit && !skipSmartOpen && MainActivity.SmartOpenGate.shouldHandle(intent)) {
             smartOpenScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 val idx = com.example.tail.data.SmartOpenStore.resolveForLaunch(context)
@@ -447,15 +492,21 @@ private fun TailApp(
     Box {
         NavHost(navController = navController, startDestination = ROUTE_GRID) {
             composable(ROUTE_GRID) {
-                HabitGridScreen(
-                    viewModel = viewModel,
-                    adviceViewModel = adviceViewModel,
-                    onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) },
-                    onNavigateToMap = { navController.navigate(ROUTE_MAP) },
-                    onNavigateToAppStats = {
-                        navController.navigate(MainActivity.ROUTE_APP_STATS)
-                    }
-                )
+                // key(HomeResetSignal.generation): a warm HOME press bumps
+                // the generation, disposing + recreating the entire grid
+                // subtree so every composable-local dialog/popup state is
+                // dropped and the plain grid shows (see HomeResetSignal).
+                key(MainActivity.HomeResetSignal.generation) {
+                    HabitGridScreen(
+                        viewModel = viewModel,
+                        adviceViewModel = adviceViewModel,
+                        onNavigateToSettings = { navController.navigate(ROUTE_SETTINGS) },
+                        onNavigateToMap = { navController.navigate(ROUTE_MAP) },
+                        onNavigateToAppStats = {
+                            navController.navigate(MainActivity.ROUTE_APP_STATS)
+                        }
+                    )
+                }
             }
             composable(ROUTE_MAP) {
                 MapScreen(

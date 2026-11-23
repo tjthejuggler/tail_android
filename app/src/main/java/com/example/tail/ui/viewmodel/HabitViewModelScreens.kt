@@ -161,6 +161,32 @@ fun HabitViewModel.toggleEditMode() {
     }
 }
 
+/**
+ * Home-button reset (Tail is the system launcher, 2026-11-23): every warm
+ * system HOME press must land on the plain main grid, no matter what mode
+ * or screen was active. Exits edit/graph/schedule modes, clears every
+ * selection + graph zoom/period, snaps the selected date back to today and
+ * switches to the first screen tab.
+ *
+ * In-grid dialog/popup state is NOT cleared here — those are composable-
+ * local `remember` vars, cleared by recreating the grid subtree (see
+ * [com.example.tail.MainActivity.HomeResetSignal] in TailApp's ROUTE_GRID).
+ */
+fun HabitViewModel.resetToHomeGrid() {
+    _editMode.value = false
+    _graphMode.value = false
+    _scheduleMode.value = false
+    _selectedEditIndex.value = -1
+    _movePendingSourceIndex.value = -1
+    _graphSelectedHabits.value = emptySet()
+    clearGraphZoom()
+    val today = java.time.LocalDate.now()
+    if (_selectedDate.value != today) {
+        navigateToDate(today)
+    }
+    switchScreen(0)
+}
+
 /** Selects (or deselects) a cell by grid index in edit mode (works for habits and placeholders). */
 
 

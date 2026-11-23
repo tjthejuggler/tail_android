@@ -2490,6 +2490,13 @@ fun HabitGridScreen(
         // A pending smart-open / widget screen switch hasn't been applied yet —
         // wait for it so "what is on screen" is known when suggestions are built.
         if (deepLink.screenIndex >= 0) return@LaunchedEffect
+        // Home-button reset (Tail is the launcher): the grid instance created
+        // by a HOME press must land on the PLAIN grid — skip the app-open
+        // suggestion flash for it (one-shot, consumed here).
+        if (com.example.tail.MainActivity.HomeResetSignal.consumeSuppressFlash()) {
+            suggestionsRequested = true
+            return@LaunchedEffect
+        }
         // Let the persisted active screen finish restoring (async settings sync).
         kotlinx.coroutines.delay(350)
         suggestionsRequested = true
