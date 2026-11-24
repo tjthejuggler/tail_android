@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the map-detail assets for the MapScreen world map.
 
-Reads Natural Earth GeoJSON files downloaded to /tmp/ne and writes compact
+Reads Natural Earth GeoJSON files downloaded to .tmp/ne and writes compact
 JSON assets into app/src/main/assets:
 
   - world_borders_110m.json : country border polylines (always shown, faint)
@@ -9,16 +9,26 @@ JSON assets into app/src/main/assets:
   - world_land_50m.json     : higher-detail land polygons (shown zoomed in)
   - world_cities.json       : populated places as [lon, lat, popRank, name]
                               popRank: 0 = mega city ... 4 = small town
+  - world_country_labels.json : country label points as
+                              [lon, lat, areaRank, wDeg, hDeg, name]; one
+                              entry PER major landmass so multi-part countries
+                              (Malaysia, Indonesia, Denmark ...) light up the
+                              country facts panel when zoomed into any part.
 
 Coordinate precision is truncated to 2 decimals (~1.1 km) to keep file
 sizes small on Android.
 
-Usage:  python3 scripts/gen_map_detail_assets.py
+Usage:  python3 scripts/gen_map_detail_assets.py [asset-name ...]
+
+With no arguments every asset is regenerated; pass names (e.g.
+world_country_labels.json) to regenerate only those. Each Natural Earth
+source can be fetched with the URLs noted in SRC_URLS below.
 """
 import json
 import os
+import sys
 
-SRC = "/tmp/ne"
+SRC = os.path.join(os.path.dirname(__file__), "..", ".tmp", "ne")
 DEST = os.path.join(os.path.dirname(__file__), "..", "app", "src", "main", "assets")
 
 
@@ -63,7 +73,11 @@ def polygons_from(geojson):
     return out
 
 
+MIN_RING_AREA_KM2 = 1_000  # drop islets; keeps Luxembourg (2.4k km²) detectable
+
+
 def area_rank(km2):
+    """0 (huge) … 4 (small) — gates how early a label appears while zooming."""
     if km2 >= 3_000_000:
         return 0
     if km2 >= 1_000_000:
@@ -76,8 +90,8 @@ def area_rank(km2):
 
 
 def ring_area_km2(ring):
-    """Approximate spherical polygon area (shoelace in degrees, weighted by
-    cos(mean latitude)). Plenty accurate for size-tiering only."""
+    """Approximate spherical polygon area in km2 (shoelace in degrees,
+    weighted by sin of latitude). Plenty accurate for size-tiering only."""
     import math
     s = 0.0
     for i in range(len(ring)):
@@ -86,14 +100,17 @@ def ring_area_km2(ring):
         s += (math.radians(lon2) - math.radians(lon1)) * (
             2 + math.sin(math.radians(lat1)) + math.sin(math.radians(lat2))
         )
-    return abs(s) * 6_371_000**2 / 2
+    return abs(s) * (6_371.0**2) / 2
 
 
 def country_labels_from(geojson):
-    """Country label points: [lon, lat, areaRank, name].
+    """Country label points: [lon, lat, areaRank, wDeg, hDeg, name].
 
-    The centroid is the bbox centre of the LARGEST polygon of each country
-    (good enough for label placement at world-map scale).
+    Emits one entry PER major landmass, not just the country's largest
+    polygon: multi-part countries (Malaysia's Borneo vs peninsula, Denmark's
+    Jutland vs Zealand, Indonesia ...) previously got a single bbox centred
+    on the biggest island, so zooming into their other parts never matched
+    any bbox and the country facts panel stayed hidden.
     """
     out = []
     for feat in geojson["features"]:
@@ -104,24 +121,29 @@ def country_labels_from(geojson):
             continue
         t = geom["type"]
         polys = [geom["coordinates"]] if t == "Polygon" else geom["coordinates"]
-        best = None  # (area, centroid, wDeg, hDeg)
+        parts = []
         for poly in polys:
             ring = poly[0]
             area = ring_area_km2(ring)
-            if best is None or area > best[0]:
-                lons = [p[0] for p in ring]
-                lats = [p[1] for p in ring]
-                w = max(lons) - min(lons)
-                h = max(lats) - min(lats)
-                best = (area, ((min(lons) + max(lons)) / 2, (min(lats) + max(lats)) / 2), w, h)
-        if best is None:
+            if area < MIN_RING_AREA_KM2:
+                continue
+            lons = [p[0] for p in ring]
+            lats = [p[1] for p in ring]
+            w = max(lons) - min(lons)
+            h = max(lats) - min(lats)
+            parts.append((area, ((min(lons) + max(lons)) / 2, (min(lats) + max(lats)) / 2), w, h))
+        if not parts:
             continue
-        out.append([
-            round(best[1][0], 2), round(best[1][1], 2),
-            area_rank(best[0]),
-            round(best[2], 2), round(best[3], 2),
-            name,
-        ])
+        # Size class comes from the largest part, so a peninsula of a big
+        # country still counts as "big" for facts detection and label timing.
+        rank = area_rank(max(p[0] for p in parts))
+        for area, centroid, w, h in parts:
+            out.append([
+                round(centroid[0], 2), round(centroid[1], 2),
+                rank,
+                round(w, 2), round(h, 2),
+                name,
+            ])
     out.sort(key=lambda c: c[2])
     return out
 
@@ -163,9 +185,27 @@ def write(name, data):
     print(f"{name}: {os.path.getsize(path) // 1024} KiB")
 
 
+SOURCES = {
+    "world_borders_110m.json": ("borders110.geojson", polylines_from),
+    "world_borders_50m.json": ("borders50.geojson", polylines_from),
+    "world_land_50m.json": ("land50.geojson", polygons_from),
+    "world_cities.json": ("cities.geojson", cities_from),
+    "world_country_labels.json": ("countries110.geojson", country_labels_from),
+}
+
+SRC_URLS = {
+    "borders110.geojson": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson",
+    "borders50.geojson": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_admin_0_countries.geojson",
+    "land50.geojson": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_50m_land.geojson",
+    "cities.geojson": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_populated_places_simple.geojson",
+    "countries110.geojson": "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson",
+}
+
 if __name__ == "__main__":
-    write("world_borders_110m.json", polylines_from(load("borders110.geojson")))
-    write("world_borders_50m.json", polylines_from(load("borders50.geojson")))
-    write("world_land_50m.json", polygons_from(load("land50.geojson")))
-    write("world_cities.json", cities_from(load("cities.geojson")))
-    write("world_country_labels.json", country_labels_from(load("countries110.geojson")))
+    wanted = sys.argv[1:] or list(SOURCES)
+    for name in wanted:
+        src_file, convert = SOURCES[name]
+        src_path = os.path.join(SRC, src_file)
+        if not os.path.exists(src_path):
+            sys.exit(f"missing source {src_path} — fetch it from:\n  {SRC_URLS[src_file]}")
+        write(name, convert(load(src_file)))

@@ -280,6 +280,35 @@ ALIASES = {
  "Monaco": None,
 }
 
+# ISO-3166 alpha-2 codes for names the Natural Earth ISO_A2 field leaves
+# blank (-99): France and Norway (data quirks), Kosovo (XK is unofficial),
+# Taiwan (ISO reserves it). N. Cyprus / Somaliland have no code at all —
+# the UI falls back to showing the plain name.
+MANUAL_ISO2 = {"France": "FR", "Norway": "NO", "Kosovo": "XK", "Taiwan": "TW"}
+
+
+def generate_flags(ne_path):
+    """Write country_flags.json: NE country name → ISO-3166 alpha-2."""
+    import json as _json
+    with open(ne_path) as f:
+        ne = _json.load(f)
+    out = {}
+    for feat in ne["features"]:
+        p = feat["properties"]
+        name = p.get("NAME") or p.get("name")
+        if not name:
+            continue
+        code = p.get("ISO_A2_EH") or p.get("ISO_A2") or ""
+        if code in ("-99", "", None):
+            code = MANUAL_ISO2.get(name, "")
+        if code and code != "-99":
+            out[name] = code
+    path = os.path.join(DEST, "country_flags.json")
+    with open(path, "w") as f:
+        _json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    print(f"country_flags.json: {len(out)} flags, {os.path.getsize(path)} bytes")
+
+
 if __name__ == "__main__":
     out = {
         name: {
@@ -298,3 +327,10 @@ if __name__ == "__main__":
         json.dump({k: v for k, v in ALIASES.items() if v}, f, ensure_ascii=False,
                   separators=(",", ":"))
     print(f"country_name_aliases.json: {os.path.getsize(alias_path)} bytes")
+    # Flags come from the Natural Earth source (same file the map labels use).
+    ne_path = os.path.join(os.path.dirname(__file__), "..", ".tmp", "ne",
+                           "countries110.geojson")
+    if os.path.exists(ne_path):
+        generate_flags(ne_path)
+    else:
+        print("country_flags.json: skipped — fetch .tmp/ne/countries110.geojson first")
