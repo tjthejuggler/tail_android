@@ -8,15 +8,16 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.tail.data.AiIconRepository
 
 /**
  * The kind of pre-filled payload a suggestion carries — determines what the
@@ -70,23 +72,29 @@ data class HabitSuggestion(
 )
 
 /**
- * Scrollable "likely next" flash strip shown once on app open. Each card
- * carries a fully pre-filled increment (amount / text / subtype); the ✓
- * applies it instantly, the ✎ opens the habit's normal input dialog with
- * the payload already typed in / selected, and the 🚫 opens the
- * "don't suggest this anymore" popup. Closable via the ✕ in the corner.
+ * Compact "likely next" flash shown once on app open. Suggestions render
+ * as single-line chips (icon · name · pre-fill · ✓ · ✎ · 🚫) in a wrapping
+ * flow layout, so the strip shows 6–8 suggestions in two short rows where
+ * the old 148 dp cards showed ~2½. The ✓ applies a chip instantly, the ✎
+ * opens the habit's normal input dialog with the payload pre-filled, the 🚫
+ * opens the "don't suggest this anymore" popup. Closable via the ✕ corner.
  *
  * @param suggestions Ordered suggestions (highest score first)
  * @param visible Whether the flash is shown
+ * @param iconOverrides `settings.habitIcons` — habit → icon name (for the chip icons)
+ * @param aiIconRepo AI icon repository (null = AI icons disabled)
  * @param onConfirm One-tap increment for the suggestion
  * @param onEdit Open the habit's pre-filled input dialog
  * @param onExcludeRequest Open the "don't suggest this anymore" popup
  * @param onDismiss ✕ pressed — hide the flash
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SuggestionFlash(
     suggestions: List<HabitSuggestion>,
     visible: Boolean,
+    iconOverrides: Map<String, String>,
+    aiIconRepo: AiIconRepository?,
     onConfirm: (HabitSuggestion) -> Unit,
     onEdit: (HabitSuggestion) -> Unit,
     onExcludeRequest: (HabitSuggestion) -> Unit,
@@ -103,44 +111,56 @@ fun SuggestionFlash(
             modifier = Modifier
                 .background(Color(0xFF232327), RoundedCornerShape(14.dp))
                 .border(1.dp, Color(0xFF444444), RoundedCornerShape(14.dp))
-                .padding(start = 12.dp, end = 6.dp, top = 8.dp, bottom = 10.dp)
+                .padding(start = 10.dp, end = 8.dp, top = 6.dp, bottom = 8.dp)
         ) {
             // Header row with the close ✕ in the corner
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(end = 4.dp)
+                modifier = Modifier.padding(end = 2.dp)
             ) {
                 Text(
                     text = "⚡ Likely next",
-                    fontSize = 13.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFFFFD700)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "· one-tap increment",
-                    fontSize = 11.sp,
-                    color = Color(0xFF888888)
-                )
-                Spacer(modifier = Modifier.weight(1f))
+                // Why the top card is here ("usually done by 09:15") — the
+                // chips themselves stay one line tall, so the reason lives
+                // in the header instead of on every card.
+                suggestions.firstOrNull()?.reason?.let { reason ->
+                    Text(
+                        text = "· ${suggestions.first().habitName} $reason",
+                        fontSize = 10.sp,
+                        color = Color(0xFF888888),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(modifier = Modifier.width(6.dp))
                 Box(
                     modifier = Modifier
                         .background(Color(0xFF333338), CircleShape)
                         .clickable(onClick = onDismiss)
-                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                        .padding(horizontal = 7.dp, vertical = 1.dp)
                 ) {
-                    Text(text = "✕", fontSize = 13.sp, color = Color(0xFFAAAAAA))
+                    Text(text = "✕", fontSize = 12.sp, color = Color(0xFFAAAAAA))
                 }
             }
-            Spacer(modifier = Modifier.padding(top = 6.dp))
-            // Horizontally scrollable suggestion cards
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.horizontalScroll(rememberScrollState())
+            Spacer(modifier = Modifier.padding(top = 5.dp))
+            // Wrapping chip flow: as many chips as fit per row, extra rows
+            // as needed. Chips are ~36 dp tall, so two rows ≈ one old card.
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 suggestions.forEach { s ->
-                    SuggestionCard(
+                    SuggestionChip(
                         suggestion = s,
+                        iconOverrides = iconOverrides,
+                        aiIconRepo = aiIconRepo,
                         onConfirm = { onConfirm(s) },
                         onEdit = { onEdit(s) },
                         onExcludeRequest = { onExcludeRequest(s) }
@@ -151,115 +171,8 @@ fun SuggestionFlash(
     }
 }
 
-@Composable
-private fun SuggestionCard(
-    suggestion: HabitSuggestion,
-    onConfirm: () -> Unit,
-    onEdit: () -> Unit,
-    onExcludeRequest: () -> Unit
-) {
-    Column(
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-        modifier = Modifier
-            .width(148.dp)
-            .background(Color(0xFF2A2A2E), RoundedCornerShape(10.dp))
-            .border(1.dp, Color(0xFF3D3D44), RoundedCornerShape(10.dp))
-            .padding(10.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = suggestion.habitName,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.White,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            // Small "don't suggest anymore" icon button in the upper-right corner
-            Box(
-                modifier = Modifier
-                    .background(Color(0xFF3A3236), CircleShape)
-                    .clickable(onClick = onExcludeRequest)
-                    .padding(horizontal = 5.dp, vertical = 2.dp)
-            ) {
-                Text(text = "🚫", fontSize = 10.sp, maxLines = 1)
-            }
-        }
-        // Pre-fill summary — what the ✓ will actually log
-        Text(
-            text = when (suggestion.kind) {
-                SuggestionKind.WEIGHTS -> "opens weight logging"
-                SuggestionKind.TEXT -> "“${suggestion.text?.take(40)?.replace('\n', '·')}”"
-                SuggestionKind.SUBTYPE -> "+${suggestion.amount} ${suggestion.subtype}"
-                SuggestionKind.PILLS -> suggestion.pills.orEmpty().entries.joinToString(" · ") { (p, n) ->
-                    if (n > 1) "$p ×$n" else p
-                }
-                SuggestionKind.CUSTOM_AMOUNT -> "+${suggestion.amount}"
-                SuggestionKind.PLAIN -> "+${suggestion.amount}"
-            },
-            fontSize = 11.sp,
-            color = Color(0xFFBBBBBB),
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = suggestion.reason,
-            fontSize = 10.sp,
-            color = Color(0xFF777777),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (suggestion.kind != SuggestionKind.WEIGHTS) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF1B5E20), RoundedCornerShape(6.dp))
-                        .clickable(onClick = onConfirm)
-                        .padding(horizontal = 12.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = if (suggestion.kind == SuggestionKind.CUSTOM_AMOUNT ||
-                            suggestion.kind == SuggestionKind.PLAIN
-                        ) "✓ +${suggestion.amount}" else "✓",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color.White,
-                        maxLines = 1
-                    )
-                }
-            }
-            if (suggestion.kind == SuggestionKind.TEXT ||
-                suggestion.kind == SuggestionKind.SUBTYPE ||
-                suggestion.kind == SuggestionKind.WEIGHTS ||
-                suggestion.kind == SuggestionKind.PILLS ||
-                suggestion.kind == SuggestionKind.CUSTOM_AMOUNT
-            ) {
-                Box(
-                    modifier = Modifier
-                        .background(Color(0xFF333338), RoundedCornerShape(6.dp))
-                        .clickable(onClick = onEdit)
-                        .padding(horizontal = 10.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = "✎ edit",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFCCCCCC),
-                        maxLines = 1
-                    )
-                }
-            }
-        }
-    }
-}
-
 /**
- * Popup opened from a suggestion card's 🚫 button: lets the user permanently
+ * Popup opened from a suggestion chip's 🚫 button: lets the user permanently
  * exclude that habit from future suggestions. The exclusion is always
  * reversible via Settings → Notifications → Increment suggestions.
  *

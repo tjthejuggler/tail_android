@@ -951,6 +951,14 @@ fun HabitViewModel.incrementHabit(
     val targetDate = date ?: _selectedDate.value
     val affectsVisibleDate = targetDate == _selectedDate.value
 
+    // Suggestion learning: a manual increment of a habit that is on the
+    // open ⚡ flash means the suggestion was right (the user tapped the tile
+    // instead of the card). No-op when no flash is open. See
+    // HabitViewModelSuggestions.kt / SuggestionFeedback.kt.
+    if (targetDate == java.time.LocalDate.now()) {
+        onManualIncrementForSuggestions(habitName)
+    }
+
     // Smart-open learning: an increment on the active screen for TODAY is
     // the strongest "I use this screen in this context" signal. Fire-and-
     // forget on IO — never blocks the tap path.

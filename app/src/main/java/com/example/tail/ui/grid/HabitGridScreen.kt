@@ -181,8 +181,11 @@ import com.example.tail.data.displayLabelForValue
 import com.example.tail.data.effectiveConditionalLinkValueKey
 import com.example.tail.data.encodeShortcutEntry
 import com.example.tail.data.findShortcutInfo
+import com.example.tail.ui.viewmodel.beginSuggestionSession
 import com.example.tail.ui.viewmodel.buildHabitSuggestions
 import com.example.tail.ui.viewmodel.habitForSuggestion
+import com.example.tail.ui.viewmodel.markSuggestionAccepted
+import com.example.tail.ui.viewmodel.settleSuggestionSession
 import com.example.tail.ui.viewmodel.setSuggestionExcluded
 import com.example.tail.ui.viewmodel.incrementHabit
 import com.example.tail.ui.viewmodel.incrementCustomAmount
@@ -992,6 +995,11 @@ fun HabitGridScreen(
     // automatic switches (cold-start restore of the saved screen, smart-open,
     // widget deep links) must leave the app-wide app-open flash alone.
     var suggestionUserNavTarget by remember { mutableStateOf(-1) }
+    // Bumped whenever a suggestion REBUILD delivers a new card set (app
+    // open / per-screen switch). Re-keys the feedback session effect so it
+    // opens a session for exactly the new cards — without re-opening when a
+    // card is merely consumed by a ✓ tap (which only shrinks the list).
+    var suggestionRebuildGen by remember { mutableStateOf(0) }
     val userSwitchScreen: (Int) -> Unit = { idx ->
         if (idx != activeScreenIndex) suggestionUserNavTarget = idx
         viewModel.switchScreen(idx)
@@ -1653,6 +1661,8 @@ fun HabitGridScreen(
                                 viewModel.buildHabitSuggestions { built ->
                                     suggestions = built
                                     suggestionFlashVisible = built.isNotEmpty()
+                                    // New card set → re-key the feedback session.
+                                    suggestionRebuildGen++
                                 }
                             },
                             modifier = Modifier.size(34.dp)
@@ -2507,6 +2517,7 @@ fun HabitGridScreen(
         viewModel.buildHabitSuggestions { built ->
             suggestions = built
             suggestionFlashVisible = built.isNotEmpty()
+            suggestionRebuildGen++
         }
     }
     // Auto-close the suggestion flash once the user interacts with anything else
@@ -2516,12 +2527,28 @@ fun HabitGridScreen(
     var suggestionHideSnapshot by remember {
         mutableStateOf<Triple<Int, Int, Boolean>?>(null)
     }
-    LaunchedEffect(suggestionFlashVisible) {
+    // Feedback session lifecycle. A session is opened when the flash
+    // becomes visible and whenever a REBUILD hands us a new card set while
+    // the flash stays visible (per-screen switch). It must NOT re-open
+    // when a card is merely consumed by a ✓ tap (the list shrinks, the
+    // remaining cards are still on screen with live impressions) — so the
+    // effect is keyed on an explicit rebuild generation, not on the list.
+    // `beginSuggestionSession` settles the previous session first (cards
+    // the rebuild dropped that were never used → IGNORED); the else-branch
+    // settles everything when the flash hides.
+    LaunchedEffect(suggestionFlashVisible, suggestionRebuildGen) {
         if (suggestionFlashVisible) {
             suggestionHideSnapshot = Triple(habits.hashCode(), activeScreenIndex, false)
+            viewModel.beginSuggestionSession(suggestions.map { it.habitName })
         } else {
             suggestionHideSnapshot = null
+            viewModel.settleSuggestionSession()
         }
+    }
+    // Leaving the grid entirely (navigation / dispose) must still settle the
+    // open session so its impressions are never lost.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { viewModel.settleSuggestionSession() }
     }
     LaunchedEffect(habits, activeScreenIndex, editMode, graphMode, scheduleMode, selectedDate) {
         val snap = suggestionHideSnapshot ?: return@LaunchedEffect
@@ -2576,6 +2603,8 @@ fun HabitGridScreen(
             suggestionHideSnapshot = if (built.isNotEmpty()) {
                 Triple(habits.hashCode(), activeScreenIndex, false)
             } else null
+            // New card set from a rebuild → re-key the feedback session.
+            suggestionRebuildGen++
         }
     }
     if (suggestionFlashVisible && !editMode && !graphMode && !scheduleMode) {
@@ -2594,10 +2623,14 @@ fun HabitGridScreen(
             SuggestionFlash(
                 suggestions = suggestions,
                 visible = suggestionFlashVisible,
+                iconOverrides = settings.habitIcons,
+                aiIconRepo = if (settings.aiIconsEnabled) viewModel.getAiIconRepo() else null,
                 onConfirm = { s ->
                     // Keep the flash open after this increment (see the
                     // auto-hide effect above) so another card can be tapped.
                     suggestionConfirming = true
+                    // Feedback learning: ✓ = the suggestion was right.
+                    viewModel.markSuggestionAccepted(s.habitName)
                     when (s.kind) {
                         SuggestionKind.TEXT -> viewModel.saveTextEntries(
                             s.habitName,
@@ -2626,6 +2659,9 @@ fun HabitGridScreen(
                 },
                 onEdit = { s ->
                     suggestionFlashVisible = false
+                    // Feedback learning: ✎ = the habit was right (only the
+                    // value needed adjusting) — counts as an accept.
+                    viewModel.markSuggestionAccepted(s.habitName)
                     // Suggestions span all screens: resolve the habit from any screen.
                     val habit = habits.firstOrNull { it.name == s.habitName }
                         ?: viewModel.habitForSuggestion(s.habitName)
@@ -2667,7 +2703,11 @@ fun HabitGridScreen(
                     }
                 },
                 onExcludeRequest = { s -> excludePopupSuggestion = s },
-                onDismiss = { suggestionFlashVisible = false }
+                onDismiss = {
+                    // Explicit ✕: the remaining cards were seen and skipped.
+                    viewModel.settleSuggestionSession()
+                    suggestionFlashVisible = false
+                }
             )
         }
         // "Don't suggest this habit anymore" confirmation popup

@@ -14,7 +14,9 @@ import com.example.tail.data.suggest.HabitScore
 import com.example.tail.data.suggest.HabitScorer
 import com.example.tail.data.suggest.PillSuggester
 import com.example.tail.data.suggest.StampIndex
+import com.example.tail.data.suggest.SuggestionFeedback
 import com.example.tail.data.suggest.SuggestionMath
+import com.example.tail.data.suggest.SuggestionSession
 import com.example.tail.data.suggest.ValueEvent
 import com.example.tail.data.suggest.ValuePicker
 import com.example.tail.ui.grid.HabitSuggestion
@@ -25,14 +27,65 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.LocalTime
 
-/** Maximum number of suggestions shown in the flash. */
-const val SUGGESTION_MAX_COUNT = 6
+/** Maximum number of suggestions shown in the flash (compact chips, 2 rows). */
+const val SUGGESTION_MAX_COUNT = 8
 
 /** Days of timestamp / value history feeding the engine. */
 private const val SUGGESTION_HISTORY_DAYS = 120
 
 /** Minimum habit score (≈ probability the habit is wanted soon) to be suggested at all. */
 private const val SUGGESTION_MIN_SCORE = 0.30
+
+/**
+ * Feedback learning (see [SuggestionFeedback]): every shown card resolves to
+ * ACCEPTED (✓ / ✎ / a manual increment of the same habit while the flash is
+ * open) or IGNORED, and the resulting per-habit acceptance rate becomes a
+ * multiplier on the history score. Habits the user never act on sink below
+ * the threshold; habits they do act on float up.
+ */
+private val suggestionSessionLock = Any()
+@Volatile
+private var suggestionSession: SuggestionSession? = null
+
+/**
+ * Starts a new feedback session for the flash about to show [names]. The
+ * previous session (if any) is settled first so its cards are never lost.
+ */
+fun HabitViewModel.beginSuggestionSession(names: List<String>) {
+    settleSuggestionSession()
+    synchronized(suggestionSessionLock) {
+        val s = SuggestionSession(context)
+        for (n in names) s.track(n)
+        suggestionSession = s
+    }
+}
+
+/** Ends the current session: every card not yet resolved counts as IGNORED. */
+fun HabitViewModel.settleSuggestionSession() {
+    synchronized(suggestionSessionLock) {
+        val s = suggestionSession ?: return
+        suggestionSession = null
+        s.settle()
+    }
+}
+
+/** Resolves [habit]'s card in the open session as ACCEPTED (✓ / ✎ tap). */
+fun HabitViewModel.markSuggestionAccepted(habit: String) {
+    synchronized(suggestionSessionLock) { suggestionSession?.markAccepted(habit) }
+}
+
+/**
+ * Called from the increment path on every manual increment: when the
+ * habit was on the open flash, the suggestion was right after all.
+ */
+fun HabitViewModel.onManualIncrementForSuggestions(habit: String) {
+    synchronized(suggestionSessionLock) { suggestionSession?.onManualIncrement(habit) }
+}
+
+/** Wipes the learned feedback (Settings → "Reset suggestion learning"). */
+fun HabitViewModel.resetSuggestionLearning() {
+    SuggestionFeedback.clear(context)
+}
 
 /** A predicted VALUE (text / subtype) below this share is a coin-flip, not a suggestion. */
 private const val SUGGESTION_MIN_VALUE_CONF = 0.20
@@ -202,10 +255,18 @@ private suspend fun HabitViewModel.computeSuggestions(
     val nowMin = now.hour * 60 + now.minute
     val timestamps = timestampRepo.loadAll() // habit → date → ["HH:mm:ss"]
     val scorer = HabitScorer(StampIndex(timestamps, today, SUGGESTION_HISTORY_DAYS), nowMin)
+    // Learned per-habit acceptance rates (SuggestionFeedback): habits the
+    // user habitually ignores are damped, habits they act on are boosted.
+    val feedback = SuggestionFeedback.multipliers(context)
 
-    val scored = eligible.mapNotNull { name -> scorer.score(name, streaks[name] ?: 0) }
-        .filter { it.score >= SUGGESTION_MIN_SCORE }
-        .sortedByDescending { it.score }
+    val scored = eligible.mapNotNull { name ->
+        val sc = scorer.score(name, streaks[name] ?: 0) ?: return@mapNotNull null
+        // Re-rank on the feedback-adjusted score so a damped card also
+        // loses its rank to better-accepted ones, not just its eligibility.
+        val adjusted = sc.score * (feedback[name] ?: 1.0)
+        if (adjusted < SUGGESTION_MIN_SCORE) null
+        else if (adjusted == sc.score) sc else sc.copy(score = adjusted)
+    }.sortedByDescending { it.score }
     // Input-type candidates get reserved resolution slots so a flood of
     // high-scoring PLAIN habits can never squeeze them out of the strip;
     // PLAIN needs at most SUGGESTION_MAX_COUNT resolved payloads.

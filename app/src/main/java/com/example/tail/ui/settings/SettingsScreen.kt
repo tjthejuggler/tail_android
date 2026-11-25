@@ -151,6 +151,7 @@ import com.example.tail.ui.viewmodel.importGarminHistoricData
 import com.example.tail.ui.viewmodel.navigateToDate
 import com.example.tail.ui.viewmodel.recalculateFitnessAgeDistance
 import com.example.tail.ui.viewmodel.screenIndexForHabit
+import com.example.tail.ui.viewmodel.resetSuggestionLearning
 import com.example.tail.ui.viewmodel.setAppStatsRecordNotificationsEnabled
 import com.example.tail.ui.viewmodel.setSuggestionExcluded
 import com.example.tail.ui.viewmodel.setSuggestionFlashEnabled
@@ -2459,9 +2460,12 @@ private fun SuggestionFlashSettingsSection(
             Text(
                 text = "On app open, show a closable flash of the habits you're " +
                     "most likely to increment right now (based on time-of-day history " +
-                    "and what's already done today). Each card is fully pre-filled — " +
+                    "and what's already done today). Each chip is fully pre-filled — " +
                     "one tap increments it. Meal and automatically-tracked habits " +
-                    "(bubbles, widgets, integrations) are never suggested.",
+                    "(bubbles, widgets, integrations) are never suggested.\n\n" +
+                    "It learns from what you use: chips you ✓, ✎ or log by hand float " +
+                    "up; chips you keep skipping sink and stop appearing (they fade back " +
+                    "in over ~2 weeks if you change routine).",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -2485,6 +2489,9 @@ private fun SuggestionFlashSettingsSection(
     }
     var showExcludedList by remember { mutableStateOf(false) }
     Spacer(modifier = Modifier.height(8.dp))
+    TextButton(onClick = { viewModel.resetSuggestionLearning() }) {
+        Text(text = "↺ Reset suggestion learning", fontSize = 13.sp)
+    }
     TextButton(onClick = { showExcludedList = !showExcludedList }) {
         Text(
             text = (if (showExcludedList) "▾" else "▸") +
