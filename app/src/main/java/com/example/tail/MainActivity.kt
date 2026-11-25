@@ -1,9 +1,15 @@
 package com.example.tail
 
+import android.content.res.Configuration
 import android.os.Bundle
+import android.view.View
+import android.view.ViewGroup
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -277,6 +283,64 @@ class MainActivity : ComponentActivity() {
                     gdriveManager = gdriveManager
                 )
             }
+        }
+    }
+
+    /**
+     * ROOT FIX for the "drift after visiting the map" bug (2026-11-25).
+     *
+     * Hard evidence from the drifted state: the platform window was perfect
+     * (frame [0,0][1080,2316], insetsChanged=false) and so was the
+     * ComposeView, yet the Scaffold content was laid out at [0,206][1038,…]
+     * — i.e. padded with the LANDSCAPE insets (top 206, right 42) while the
+     * phone was in portrait. So the stale data lived inside Compose:
+     * `WindowInsetsHolder` keeps the last insets handed to the ComposeView.
+     * MapScreen rotates to landscape + hides the bars; because the manifest
+     * handles rotation via configChanges (no Activity recreation), flipping
+     * back to portrait re-lays-out the views but never re-dispatches a NEW
+     * insets object into the ComposeView, so Compose kept the landscape
+     * snapshot forever (it even survived the grid subtree being recreated
+     * by a HOME press). requestApplyInsets() re-sends the same settled state,
+     * so a plain re-show of the bars never fixed it.
+     *
+     * Fix: whenever the configuration changes (rotation) — and whenever the
+     * window regains focus (returning from the immersive map) — build fresh
+     * insets from the window's CURRENT stable-inset state and dispatch them
+     * straight into the ComposeView, forcing Compose to re-read real values.
+     */
+    private fun redispatchFreshInsetsToCompose() {
+        val decor = window?.decorView ?: return
+        val root = decor.findViewById<ViewGroup>(android.R.id.content) ?: return
+        // Current, orientation-correct system-bar insets for THIS window.
+        val fresh = ViewCompat.getRootWindowInsets(decor) ?: WindowInsetsCompat.CONSUMED
+        // Hand them to every Compose host under the content view so each
+        // WindowInsetsHolder re-reads instead of keeping its old snapshot.
+        fun dispatch(v: View) {
+            if (v is androidx.compose.ui.platform.AbstractComposeView) {
+                ViewCompat.dispatchApplyWindowInsets(v, fresh)
+            }
+            if (v is ViewGroup) for (i in 0 until v.childCount) dispatch(v.getChildAt(i))
+        }
+        dispatch(root)
+        // Follow with a platform re-apply so the ViewRootImpl also re-sends
+        // (harmless when the state is unchanged; authoritative when not).
+        ViewCompat.requestApplyInsets(decor)
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // Rotation is handled here (manifest configChanges), so this is the
+        // moment the old orientation's insets become wrong. Re-dispatch on
+        // the next frame, after the views have been re-laid-out.
+        window?.decorView?.post { redispatchFreshInsetsToCompose() }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            // Covers the return trip from the immersive map screen even when
+            // the orientation ends up the same as before it was opened.
+            window?.decorView?.post { redispatchFreshInsetsToCompose() }
         }
     }
 
