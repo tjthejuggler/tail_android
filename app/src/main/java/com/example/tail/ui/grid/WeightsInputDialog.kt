@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import com.example.tail.data.WEIGHT_UNIT_KG
 import com.example.tail.data.WEIGHT_UNIT_LB
 import com.example.tail.data.WeightsDayValues
+import com.example.tail.data.decodeWeightsExerciseDefault
 import com.example.tail.data.formatWeightTenths
 import com.example.tail.data.gramsToDisplayTenths
 import com.example.tail.data.kgToGrams
@@ -57,18 +58,54 @@ fun WeightsInputDialog(
     /** Pre-fill (editing an existing set): exercise name; null = most recent. */
     initialExerciseName: String? = null,
     /**
+     * Last-used toggles per exercise for this habit: exercise name → the
+     * "unit|machine" value written by the view model on every save. Picking
+     * an exercise restores the kg/lb and Machine/Free bubbles that were last
+     * used with it; exercises with no record keep the current selection.
+     */
+    exerciseDefaults: Map<String, String> = emptyMap(),
+    /**
      * Looks up the PB + most-recent set for the currently typed exercise on
      * the currently selected type (machine/free). Recomputed as the name or
      * type changes so the readout always matches what is being entered.
      */
     getStats: (exerciseName: String, machine: Boolean) -> WeightsExerciseStats = { _, _ -> WeightsExerciseStats() },
-    onConfirm: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit,
+    onConfirm: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String, unit: String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var unit by remember { mutableStateOf(if (defaultUnit == WEIGHT_UNIT_LB) WEIGHT_UNIT_LB else WEIGHT_UNIT_KG) }
-    var machine by remember { mutableStateOf(initialMachine) }
     // Auto-fill with the most recently used exercise name for quick repeat sets
     var exerciseName by remember { mutableStateOf(initialExerciseName ?: recentExercises.firstOrNull() ?: "") }
+
+    // Initial bubbles: the pre-filled exercise's last-used toggles win (that
+    // is the whole point of the feature); otherwise the graph unit / the
+    // edited set's type. Keys are matched case-insensitively, like the PB join.
+    fun defaultFor(name: String): Pair<String, Boolean>? =
+        decodeWeightsExerciseDefault(exerciseDefaults[name.trim()])
+            ?: exerciseDefaults.entries
+                .firstOrNull { it.key.equals(name.trim(), ignoreCase = true) }
+                ?.let { decodeWeightsExerciseDefault(it.value) }
+    val initialDefault = defaultFor(exerciseName)
+    val initialUnit = if (defaultUnit == WEIGHT_UNIT_LB) WEIGHT_UNIT_LB else WEIGHT_UNIT_KG
+    var unit by remember { mutableStateOf(initialDefault?.first ?: initialUnit) }
+    var machine by remember { mutableStateOf(initialDefault?.second ?: initialMachine) }
+
+    // Bubbles the user has tapped THIS session stick: a later exercise change
+    // must not silently undo an explicit choice. Exercise switching only fills
+    // bubbles that are still on their initial value.
+    var unitTouched by remember { mutableStateOf(false) }
+    var machineTouched by remember { mutableStateOf(false) }
+
+    fun applyExerciseDefault(name: String) {
+        val d = defaultFor(name) ?: return
+        if (!unitTouched) unit = d.first
+        if (!machineTouched) machine = d.second
+    }
+
+    fun selectExercise(name: String) {
+        exerciseName = name
+        applyExerciseDefault(name)
+    }
+
     // Whole grams render without a decimal, others with one.
     fun initialGramsToText(grams: Int): String {
         if (grams <= 0) return ""
@@ -108,7 +145,13 @@ fun WeightsInputDialog(
                 Spacer(modifier = Modifier.height(2.dp))
                 OutlinedTextField(
                     value = exerciseName,
-                    onValueChange = { exerciseName = it.take(40) },
+                    // Re-type the whole name = re-select it: once the typed text
+                    // exactly matches a known exercise its bubbles are applied.
+                    onValueChange = { raw ->
+                        val next = raw.take(40)
+                        exerciseName = next
+                        if (defaultFor(next) != null) applyExerciseDefault(next)
+                    },
                     singleLine = true,
                     placeholder = { Text("e.g. Bench Press", fontSize = 12.sp, color = Color(0xFF666666)) },
                     modifier = Modifier.fillMaxWidth().height(52.dp),
@@ -127,7 +170,7 @@ fun WeightsInputDialog(
                             UnitToggleOption(
                                 label = name,
                                 selected = exerciseName == name,
-                                onClick = { exerciseName = name }
+                                onClick = { selectExercise(name) }
                             )
                         }
                     }
@@ -165,8 +208,8 @@ fun WeightsInputDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text("Unit:", fontSize = 12.sp, color = Color(0xFFBBBBBB))
-                    UnitToggleOption("kg", unit == WEIGHT_UNIT_KG) { unit = WEIGHT_UNIT_KG }
-                    UnitToggleOption("lb", unit == WEIGHT_UNIT_LB) { unit = WEIGHT_UNIT_LB }
+                    UnitToggleOption("kg", unit == WEIGHT_UNIT_KG) { unitTouched = true; unit = WEIGHT_UNIT_KG }
+                    UnitToggleOption("lb", unit == WEIGHT_UNIT_LB) { unitTouched = true; unit = WEIGHT_UNIT_LB }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -177,8 +220,8 @@ fun WeightsInputDialog(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text("Type:", fontSize = 12.sp, color = Color(0xFFBBBBBB))
-                    UnitToggleOption("Machine", machine) { machine = true }
-                    UnitToggleOption("Free", !machine) { machine = false }
+                    UnitToggleOption("Machine", machine) { machineTouched = true; machine = true }
+                    UnitToggleOption("Free", !machine) { machineTouched = true; machine = false }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -230,7 +273,7 @@ fun WeightsInputDialog(
             Button(
                 onClick = {
                     val grams = if (unit == WEIGHT_UNIT_LB) lbToGrams(weight) else kgToGrams(weight)
-                    if (grams > 0 || reps > 0) onConfirm(grams, reps, machine, exerciseName.trim())
+                    if (grams > 0 || reps > 0) onConfirm(grams, reps, machine, exerciseName.trim(), unit)
                 },
                 enabled = canConfirm
             ) {
@@ -507,15 +550,17 @@ fun WeightsSetsDayEditorDialog(
     unit: String,
     /** Previously used exercise/machine names on this habit, most recent first. */
     recentExercises: List<String> = emptyList(),
+    /** Per-exercise last-used toggles (exercise → "unit|machine") for this habit. */
+    exerciseDefaults: Map<String, String> = emptyMap(),
     /** Label for the day's legacy aggregated entry (days logged before
      *  per-set recording existed) — rendered as one editable row. */
     legacyEntry: String? = null,
     /** Open the legacy aggregated editor (the row above). */
     onOpenLegacyEditor: () -> Unit = {},
     /** Log a NEW set (same path as the grid popup: slot writes + increment). */
-    onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit,
+    onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String, unit: String) -> Unit,
     /** Replace the set stamped [time]. */
-    onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet) -> Unit,
+    onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet, unit: String) -> Unit,
     /** Remove the set stamped [time] (its increment + timestamp go too). */
     onDeleteSet: (time: String) -> Unit,
     /** Remove ALL weights data for the day. */
@@ -540,13 +585,14 @@ fun WeightsSetsDayEditorDialog(
             habitName = habitName,
             defaultUnit = unit,
             recentExercises = recentExercises,
+            exerciseDefaults = exerciseDefaults,
             initialWeightGrams = editSet?.weightGrams ?: 0,
             initialReps = editSet?.reps ?: 0,
             initialMachine = editSet?.machine ?: true,
             initialExerciseName = editSet?.exercise,
-            onConfirm = { grams, reps, machine, name ->
-                if (editing == addNewSentinel) onAddSet(grams, reps, machine, name)
-                else onUpdateSet(editing!!, com.example.tail.data.WeightsSet(machine, name, grams, reps, editing!!))
+            onConfirm = { grams, reps, machine, name, enteredUnit ->
+                if (editing == addNewSentinel) onAddSet(grams, reps, machine, name, enteredUnit)
+                else onUpdateSet(editing!!, com.example.tail.data.WeightsSet(machine, name, grams, reps, editing!!), enteredUnit)
                 editing = null
             },
             onDismiss = { editing = null }

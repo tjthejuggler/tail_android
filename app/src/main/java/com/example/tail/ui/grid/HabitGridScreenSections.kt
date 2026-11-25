@@ -2376,6 +2376,7 @@ internal fun EditModeControlBar(
                         values = weightsDayValues,
                         unit = weightsUnit,
                         recentExercises = weightsRecentExercises,
+                        exerciseDefaults = weightsSetEdit.exerciseDefaults,
                         dayExerciseNames = weightsDayExerciseNames,
                         daySets = weightsSetEdit.daySets,
                         onSetValues = { v, exerciseName ->
@@ -3605,10 +3606,12 @@ internal fun EditModeHabitHeaderRow(
 internal data class WeightsSetEditHandles(
     /** The selected date's individually recorded sets (empty = legacy day). */
     val daySets: List<com.example.tail.data.WeightsSet> = emptyList(),
+    /** Per-exercise last-used toggles (exercise → "unit|machine") for the selected habit. */
+    val exerciseDefaults: Map<String, String> = emptyMap(),
     /** Log a NEW set (same path as the grid popup: slot writes + increment). */
-    val onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit = { _, _, _, _ -> },
+    val onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String, unit: String) -> Unit = { _, _, _, _, _ -> },
     /** Replace the set stamped [time]. */
-    val onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet) -> Unit = { _, _ -> },
+    val onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet, unit: String) -> Unit = { _, _, _ -> },
     /** Remove the set stamped [time] (its increment + timestamp go too). */
     val onDeleteSet: (time: String) -> Unit = { _ -> }
 )
@@ -3620,6 +3623,8 @@ internal fun EditModeWeightsSummarySection(
     unit: String,
     /** Previously used exercise/machine names on this habit, most recent first. */
     recentExercises: List<String> = emptyList(),
+    /** Per-exercise last-used toggles (exercise → "unit|machine") for this habit. */
+    exerciseDefaults: Map<String, String> = emptyMap(),
     /**
      * The exercise names recorded FOR THIS DAY (machine/free slot → name),
      * shown in the summary and used to pre-fill the day editor.
@@ -3629,9 +3634,9 @@ internal fun EditModeWeightsSummarySection(
     daySets: List<com.example.tail.data.WeightsSet> = emptyList(),
     onSetValues: (com.example.tail.data.WeightsDayValues, String) -> Unit,
     /** Log a NEW set for the day (slot writes + increment, like the grid popup). */
-    onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String) -> Unit = { _, _, _, _ -> },
+    onAddSet: (weightGrams: Int, reps: Int, machine: Boolean, exerciseName: String, unit: String) -> Unit = { _, _, _, _, _ -> },
     /** Replace the set stamped [time]. */
-    onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet) -> Unit = { _, _ -> },
+    onUpdateSet: (time: String, set: com.example.tail.data.WeightsSet, unit: String) -> Unit = { _, _, _ -> },
     /** Remove the set stamped [time] (its increment + timestamp go too). */
     onDeleteSet: (time: String) -> Unit = { _ -> },
     /** Called when the user deletes ALL weights data for the selected day. */
@@ -3702,6 +3707,7 @@ internal fun EditModeWeightsSummarySection(
                 sets = daySets,
                 unit = unit,
                 recentExercises = recentExercises,
+                exerciseDefaults = exerciseDefaults,
                 onAddSet = onAddSet,
                 onUpdateSet = onUpdateSet,
                 onDeleteSet = onDeleteSet,
@@ -3721,6 +3727,7 @@ internal fun EditModeWeightsSummarySection(
                 sets = emptyList(),
                 unit = unit,
                 recentExercises = recentExercises,
+                exerciseDefaults = exerciseDefaults,
                 legacyEntry = if (values.hasAny) {
                     buildString {
                         if (values.machineWeightGrams > 0 || values.machineReps > 0) {

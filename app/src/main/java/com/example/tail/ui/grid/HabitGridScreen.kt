@@ -3097,16 +3097,18 @@ fun HabitGridScreen(
                     habitName = habitName,
                     defaultUnit = settings.graphWeightUnit,
                     recentExercises = settings.weightsRecentExercises[habitName] ?: emptyList(),
+                    exerciseDefaults = settings.weightsExerciseDefaults[habitName] ?: emptyMap(),
                     initialWeightGrams = set.weightGrams,
                     initialReps = set.reps,
                     initialMachine = set.machine,
                     initialExerciseName = set.exercise,
-                    onConfirm = { grams, reps, machine, name ->
+                    onConfirm = { grams, reps, machine, name, unit ->
                         val time = editTime
                         weightsSetEditTime = null
                         viewModel.updateWeightsSet(
                             habitName, time,
-                            com.example.tail.data.WeightsSet(machine, name, grams, reps, time)
+                            com.example.tail.data.WeightsSet(machine, name, grams, reps, time),
+                            unit
                         )
                         // Refresh the badges for the edited set.
                         viewModel.loadWeightsTimestampLabels(habitName, selectedDate, timestampEditorList) { labels ->

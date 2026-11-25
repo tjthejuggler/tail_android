@@ -93,6 +93,7 @@ import com.example.tail.data.TextInputRepository
 import com.example.tail.data.TimedDataRepository
 import com.example.tail.data.WallpaperMetric
 import com.example.tail.data.WallpaperTarget
+import com.example.tail.data.WEIGHT_UNIT_KG
 import com.example.tail.data.WeightsDayValues
 import com.example.tail.data.appLinkKey
 import com.example.tail.data.appLinkPackageName
@@ -1727,6 +1728,31 @@ internal fun HabitViewModel.recordRecentExercise(habitName: String, trimmedExerc
 }
 
 /**
+ * Remembers the unit ("kg"/"lb") and type (machine/free) toggles that were
+ * last used with [exerciseName] on [habitName], so the weights popup can
+ * restore them the next time that exercise is picked. Stored as a
+ * "unit|machine" value in [AppSettings.weightsExerciseDefaults].
+ */
+internal fun HabitViewModel.recordWeightsExerciseDefaults(
+    habitName: String,
+    exerciseName: String,
+    unit: String,
+    machine: Boolean
+) {
+    val trimmedExercise = exerciseName.trim()
+    if (trimmedExercise.isEmpty()) return
+    val value = com.example.tail.data.encodeWeightsExerciseDefault(unit, machine)
+    viewModelScope.launch {
+        val current = _settings.value.weightsExerciseDefaults.toMutableMap()
+        val perHabit = current[habitName]?.toMutableMap() ?: mutableMapOf()
+        perHabit[trimmedExercise] = value
+        current[habitName] = perHabit
+        settingsRepo.saveWeightsExerciseDefaults(current)
+        _settings.value = _settings.value.copy(weightsExerciseDefaults = current)
+    }
+}
+
+/**
  * Saves a weights-habit log entry: the slot writes (weight max-merge +
  * reps accumulate) are applied to the in-memory DB FIRST, then the +1 on
  * the habit's own count is routed through the regular increment path —
@@ -1751,7 +1777,9 @@ fun HabitViewModel.saveWeightsEntry(
     weightGrams: Int,
     reps: Int,
     machine: Boolean,
-    exerciseName: String = ""
+    exerciseName: String = "",
+    /** Unit the set was entered in ("kg"/"lb") — remembered per exercise. */
+    unit: String = WEIGHT_UNIT_KG
 ) {
     if (weightGrams <= 0 && reps <= 0) return
     val uriString = _settings.value.fileUri
@@ -1819,6 +1847,9 @@ fun HabitViewModel.saveWeightsEntry(
 
     // Remember the exercise/machine name for quick re-entry (most recent first)
     recordRecentExercise(habitName, trimmedExercise)
+    // Remember the unit + type toggles for this exercise so picking it again
+    // restores the bubbles that were last used with it.
+    recordWeightsExerciseDefaults(habitName, trimmedExercise, unit, machine)
 
     // Record WHICH exercise this day's slot belongs to (powers the PB display,
     // the graph's exercise filter and the edit-screen name readout). The
@@ -2049,7 +2080,13 @@ fun HabitViewModel.getWeightsDayValues(habitName: String): WeightsDayValues {
  * editor). Zero values clear the slot for the day. The habit's own count
  * (number of logged entries) is not touched.
  */
-fun HabitViewModel.setWeightsDayValues(habitName: String, values: WeightsDayValues, exerciseName: String = "") {
+fun HabitViewModel.setWeightsDayValues(
+    habitName: String,
+    values: WeightsDayValues,
+    exerciseName: String = "",
+    /** Unit the edited values were entered in ("kg"/"lb") — remembered per exercise. */
+    unit: String = WEIGHT_UNIT_KG
+) {
     val uriString = _settings.value.fileUri
     if (uriString.isEmpty()) {
         _errorMessage.value = "No file selected. Please pick a file in Settings."
@@ -2079,6 +2116,16 @@ fun HabitViewModel.setWeightsDayValues(habitName: String, values: WeightsDayValu
 
     // Keep the exercise quick-choices fresh when an edited entry names one
     recordRecentExercise(habitName, exerciseName.trim())
+    // Remember the unit + type for this exercise. The editor applies one name
+    // to whichever slot is populated, so the type is whichever has data
+    // (machine wins ties, mirroring the editor's own initial toggle).
+    if (exerciseName.isNotBlank()) {
+        val machineHasData = values.machineWeightGrams > 0 || values.machineReps > 0
+        val freeHasData = values.freeWeightGrams > 0 || values.freeReps > 0
+        recordWeightsExerciseDefaults(
+            habitName, exerciseName, unit, machine = machineHasData || !freeHasData
+        )
+    }
 
     // The editor writes the day's slots absolutely — record which exercise
     // each populated slot belongs to.
@@ -2224,11 +2271,18 @@ private suspend fun HabitViewModel.syncWeightsDayNamesFromSets(
  * recomputes the day's aggregated slots from the set list. The increment the
  * set belongs to is untouched (edits don't change the count).
  */
-fun HabitViewModel.updateWeightsSet(habitName: String, time: String, newSet: com.example.tail.data.WeightsSet) {
+fun HabitViewModel.updateWeightsSet(
+    habitName: String,
+    time: String,
+    newSet: com.example.tail.data.WeightsSet,
+    /** Unit the edited set was entered in ("kg"/"lb") — remembered per exercise. */
+    unit: String = WEIGHT_UNIT_KG
+) {
     viewModelScope.launch {
         weightsSetsRepo.updateSet(habitName, _selectedDate.value, time, newSet.copy(time = time))
         _weightsSets.value = weightsSetsRepo.loadAll()
         recordRecentExercise(habitName, newSet.exercise.trim())
+        recordWeightsExerciseDefaults(habitName, newSet.exercise.trim(), unit, newSet.machine)
         syncWeightsDayNamesFromSets(habitName, _selectedDate.value)
         recomputeWeightsSlotsFromSets(habitName, _selectedDate.value)
     }

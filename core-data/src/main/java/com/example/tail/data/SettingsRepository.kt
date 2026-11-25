@@ -329,6 +329,8 @@ private val KEY_WEIGHTS_HABITS = stringSetPreferencesKey("weights_habits")
 private val KEY_GRAPH_WEIGHT_UNIT = stringPreferencesKey("graph_weight_unit")
 // Most recently used exercise/machine names per weights habit — same "habit\x00a,b|||" format as subtypes
 private val KEY_WEIGHTS_RECENT_EXERCISES = stringPreferencesKey("weights_recent_exercises")
+// Last-used input toggles per weights habit: "unit|machine" keyed by exercise name.
+private val KEY_WEIGHTS_EXERCISE_DEFAULTS = stringPreferencesKey("weights_exercise_defaults")
 private val KEY_AI_ASSISTANT_BASE_URL = stringPreferencesKey("ai_assistant_base_url")
 private val KEY_AI_ASSISTANT_API_KEY = stringPreferencesKey("ai_assistant_api_key")
 private val KEY_AI_ASSISTANT_MODEL = stringPreferencesKey("ai_assistant_model")
@@ -1358,6 +1360,7 @@ class SettingsRepository(private val context: Context) {
             weightsHabits = prefs[KEY_WEIGHTS_HABITS] ?: emptySet(),
             graphWeightUnit = prefs[KEY_GRAPH_WEIGHT_UNIT] ?: WEIGHT_UNIT_KG,
             weightsRecentExercises = decodeSubtypesMap(prefs[KEY_WEIGHTS_RECENT_EXERCISES] ?: ""),
+            weightsExerciseDefaults = decodeNestedStringMap(prefs[KEY_WEIGHTS_EXERCISE_DEFAULTS] ?: ""),
             aiAssistantBaseUrl = prefs[KEY_AI_ASSISTANT_BASE_URL] ?: "",
             aiAssistantApiKey = prefs[KEY_AI_ASSISTANT_API_KEY] ?: "",
             aiAssistantModel = prefs[KEY_AI_ASSISTANT_MODEL] ?: "",
@@ -2366,6 +2369,13 @@ class SettingsRepository(private val context: Context) {
     suspend fun saveWeightsRecentExercises(recent: Map<String, List<String>>) {
         context.dataStore.edit { prefs ->
             prefs[KEY_WEIGHTS_RECENT_EXERCISES] = encodeSubtypesMap(recent)
+        }
+    }
+
+    /** Saves the last-used "unit|machine" toggles per exercise, per weights habit. */
+    suspend fun saveWeightsExerciseDefaults(defaults: Map<String, Map<String, String>>) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_WEIGHTS_EXERCISE_DEFAULTS] = encodeNestedStringMap(defaults)
         }
     }
 

@@ -1895,6 +1895,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
                 mealHabits = settings.mealHabits.replaceElement(oldName, newName),
                 weightsHabits = settings.weightsHabits.replaceElement(oldName, newName),
                 weightsRecentExercises = settings.weightsRecentExercises.replaceKey(oldName, newName),
+                weightsExerciseDefaults = settings.weightsExerciseDefaults.replaceKey(oldName, newName),
                 cameraHabits = settings.cameraHabits.replaceElement(oldName, newName),
                 habitAppAssociations = settings.habitAppAssociations.replaceKey(oldName, newName),
                 habitLongPressActions = settings.habitLongPressActions.replaceKey(oldName, newName),
@@ -1971,6 +1972,7 @@ fun HabitViewModel.renameHabit(oldName: String, newName: String) {
             settingsRepo.saveMealHabits(newSettings.mealHabits)
             settingsRepo.saveWeightsHabits(newSettings.weightsHabits)
             settingsRepo.saveWeightsRecentExercises(newSettings.weightsRecentExercises)
+            settingsRepo.saveWeightsExerciseDefaults(newSettings.weightsExerciseDefaults)
             settingsRepo.saveCameraHabits(newSettings.cameraHabits)
             settingsRepo.saveHabitAppAssociations(newSettings.habitAppAssociations)
             settingsRepo.saveHabitLongPressActions(newSettings.habitLongPressActions)

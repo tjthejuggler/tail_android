@@ -777,6 +777,39 @@ const val GRAPH_METRIC_WEIGHTS_FREE_REPS = "weights_free_reps"
 const val WEIGHT_UNIT_KG = "kg"
 const val WEIGHT_UNIT_LB = "lb"
 
+/** Type tokens for the per-exercise weights defaults value ("unit|machine"). */
+const val WEIGHTS_DEFAULT_MACHINE = "machine"
+const val WEIGHTS_DEFAULT_FREE = "free"
+
+/**
+ * Encodes the last-used weights popup toggles for one exercise into the
+ * compact "unit|machine" string stored in [AppSettings.weightsExerciseDefaults].
+ */
+fun encodeWeightsExerciseDefault(unit: String, machine: Boolean): String =
+    "$unit|${if (machine) WEIGHTS_DEFAULT_MACHINE else WEIGHTS_DEFAULT_FREE}"
+
+/**
+ * Decodes a [encodeWeightsExerciseDefault] value. Returns null (and the caller
+ * keeps its own fallback) when the stored string is malformed or names an
+ * unknown unit/type, so a corrupt or old value can never pick a bogus bubble.
+ */
+fun decodeWeightsExerciseDefault(raw: String?): Pair<String, Boolean>? {
+    if (raw.isNullOrBlank()) return null
+    val parts = raw.split('|')
+    if (parts.size != 2) return null
+    val unit = when (parts[0].trim()) {
+        WEIGHT_UNIT_KG -> WEIGHT_UNIT_KG
+        WEIGHT_UNIT_LB -> WEIGHT_UNIT_LB
+        else -> return null
+    }
+    val machine = when (parts[1].trim()) {
+        WEIGHTS_DEFAULT_MACHINE -> true
+        WEIGHTS_DEFAULT_FREE -> false
+        else -> return null
+    }
+    return unit to machine
+}
+
 /**
  * Default daily drinking goal (ml) for water-type habits, used when no
  * explicit goal is configured in [AppSettings.waterDailyGoals].
@@ -1749,6 +1782,14 @@ data class AppSettings(
     val graphWeightUnit: String = WEIGHT_UNIT_KG,
     /** Most recently used exercise/machine names per weights habit (most recent first, capped at 10). */
     val weightsRecentExercises: Map<String, List<String>> = emptyMap(),
+    /**
+     * Last-used input toggles per weights habit, keyed by exercise name:
+     * habit → exercise → "unit|machine" where unit is [WEIGHT_UNIT_KG] or
+     * [WEIGHT_UNIT_LB] and machine is "machine" or "free". Selecting an
+     * exercise in the weights popup restores the unit and type bubbles that
+     * were last used with it.
+     */
+    val weightsExerciseDefaults: Map<String, Map<String, String>> = emptyMap(),
 
     // ── AI Assistant settings ───────────────────────────────────────────
     /** Base URL for the AI Assistant LLM API (OpenAI-compatible, e.g. "https://api.z.ai/api/coding/paas/v4"). */

@@ -239,11 +239,13 @@ internal fun WeightsDialogHost(
         habitName = habit.name,
         defaultUnit = settings.graphWeightUnit,
         recentExercises = settings.weightsRecentExercises[habit.name] ?: emptyList(),
+        // Per-exercise last-used kg/lb + Machine/Free bubbles.
+        exerciseDefaults = settings.weightsExerciseDefaults[habit.name] ?: emptyMap(),
         getStats = { exerciseName, machine ->
             viewModel.getWeightsExerciseStats(habit.name, exerciseName, machine)
         },
-        onConfirm = { weightGrams, reps, machine, exerciseName ->
-            viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine, exerciseName)
+        onConfirm = { weightGrams, reps, machine, exerciseName, unit ->
+            viewModel.saveWeightsEntry(habit.name, weightGrams, reps, machine, exerciseName, unit)
             onDismiss()
             // Popup-gated increment: the lizard shimmer fires only now,
             // on weights dialog submission.

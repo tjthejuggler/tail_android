@@ -310,11 +310,12 @@ internal fun EditBarHost(
             ?.let { name ->
                 WeightsSetEditHandles(
                     daySets = viewModel.getWeightsDaySets(name),
-                    onAddSet = { grams, reps, machine, exercise ->
-                        viewModel.saveWeightsEntry(name, grams, reps, machine, exercise)
+                    exerciseDefaults = settings.weightsExerciseDefaults[name] ?: emptyMap(),
+                    onAddSet = { grams, reps, machine, exercise, unit ->
+                        viewModel.saveWeightsEntry(name, grams, reps, machine, exercise, unit)
                     },
-                    onUpdateSet = { time, set ->
-                        viewModel.updateWeightsSet(name, time, set)
+                    onUpdateSet = { time, set, unit ->
+                        viewModel.updateWeightsSet(name, time, set, unit)
                     },
                     onDeleteSet = { time ->
                         viewModel.deleteWeightsSet(name, time)
