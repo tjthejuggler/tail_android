@@ -4,7 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
@@ -18,26 +17,22 @@ import kotlinx.coroutines.flow.first
 import java.util.concurrent.TimeUnit
 
 /**
- * Background Garmin-metrics sync.
+ * Garmin-metrics cache sync — retained for on-demand use only.
  *
- * Root cause this closes (2026-09-26): Garmin data only ever synced when the
- * main app UI was open — `onAppForegrounded` and a 24h polling loop that lived
- * in the HabitViewModel's viewModelScope (and was only started when settings
- * were saved). When the app was swiped away or the process died, Garmin sync
- * silently stopped while everything else (movies, PC-widget events) kept
- * flowing through their WorkManager workers — so "everything synced except
- * Garmin" with nothing obviously broken on either side.
+ * HISTORY (2026-09-26): this worker existed as a 2-hour periodic so Garmin
+ * data kept flowing while the app was closed. In the launcher era
+ * (2026-11-25) that periodic schedule was retired by [BackgroundWorkPolicy]:
+ * Tail is the HOME app and `onAppForegrounded` already calls
+ * `syncGarminCurrentMonth()` on every ON_RESUME, which is a far more frequent
+ * and better-timed trigger than any period. The 2 h periodic was pure
+ * duplication + ~12 network wakeups/day for nothing.
  *
- * This worker mirrors the bridge-sync half of [TailCueSyncWorker]: every ~2 hours (network-constrained,
- * no charging requirement) it pulls the last 7 days of metrics from the proxy
- * and MERGES them into the phone-local Garmin cache. The habit-DB application
- * of that cached data already happens on every app foreground (idempotent
- * `applyGarminData`), and the bubble overlay / widgets read the repository
- * cache directly — so they go fresh immediately after this worker runs.
+ * The class is kept (not deleted) because its merge logic is the canonical
+ * "pull from every candidate proxy, merge into the local cache" routine and
+ * remains a valid one-shot if an explicit in-app "Sync now" is ever wanted.
+ * It is NOT scheduled anywhere.
  *
- * An unreachable proxy (away from home, PC asleep) is not an error: the worker
- * finishes quietly and the next periodic pass retries.
- *
+ * An unreachable proxy (away from home, PC asleep) is not an error.
  * Configuration gaps (Garmin disabled, no habit links, no DB file) are logged
  * as INFO, not errors — they are intentional states, but they are logged so a
  * misconfiguration shows up in `adb logcat` instead of failing silently.
@@ -130,27 +125,7 @@ class GarminSyncWorker(appContext: Context, params: WorkerParameters) :
         private const val TAG = "GarminSyncWorker"
         private const val UNIQUE_WORK_NAME = "garmin_metrics_sync"
 
-        /**
-         * Idempotently schedules the periodic sync (2 h, any connected
-         * network, battery not low — battery gate added 2026-11-19 with the
-         * background-traffic cleanup). Safe to call on every app open —
-         * KEEP leaves an existing schedule untouched.
-         */
-        fun schedule(context: Context) {
-            val request = PeriodicWorkRequestBuilder<GarminSyncWorker>(2, TimeUnit.HOURS)
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .setRequiresBatteryNotLow(true)
-                        .build()
-                )
-                .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                UNIQUE_WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                request
-            )
-            Log.i(TAG, "Garmin sync worker scheduled (2 h period)")
-        }
+        // No schedule(): the 2 h periodic was retired 2026-11-25
+        // (BackgroundWorkPolicy). This worker is on-demand only.
     }
 }

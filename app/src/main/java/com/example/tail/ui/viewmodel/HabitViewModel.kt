@@ -143,6 +143,13 @@ import org.json.JSONObject
 private const val TAG = "HabitVM"
 
 /**
+ * Persisted day marker for the foreground day-rollover catch-ups that
+ * replaced the retired midnight alarms (see HabitViewModel.runDailyCatchUps).
+ */
+private const val PREFS_CATCHUP = "tail_daily_catchup"
+private const val KEY_CATCHUP_DAY = "last_day"
+
+/**
  * Parses one media text-log entry written by MediaPlaybackTracker:
  * `"HH:mm Title — Artist/Show (NN min) — mediaUri"` (artist, duration and
  * URI segments are all optional). Group1 = title, group2 = artist/show,
@@ -2954,6 +2961,46 @@ class HabitViewModel(
                 Log.w(TAG, "App-stats record catch-up failed: ${e.message}")
             }
         }
+        // Launcher battery policy (2026-11-25): the in-process pollers only
+        // run while we are visible. ON_START marks us visible and relaunches
+        // any that are enabled but currently dead (first start, or stopped by
+        // a previous ON_STOP). Settings-gated so a disabled feature never
+        // spins a loop up.
+        isAppVisible = true
+        resumeBackgroundPollers()
+    }
+
+    /**
+     * Relaunches the lifecycle-gated pollers that are enabled in settings
+     * but not currently running. Idempotent — safe on every ON_START.
+     * Each loop exits by itself once [isAppVisible] flips false.
+     */
+    private fun resumeBackgroundPollers() {
+        val s = _settings.value
+        if (s.chessComEnabled && s.chessComUsername.isNotEmpty() &&
+            lastLoadedUri.isNotEmpty() && chessComPollingJob?.isActive != true
+        ) {
+            startChessComPolling()
+        }
+        if (s.githubEnabled && s.githubRepoUrls.isNotEmpty() &&
+            lastLoadedUri.isNotEmpty() && githubPollingJob?.isActive != true
+        ) {
+            startGithubPolling()
+        }
+    }
+
+    /**
+     * Called on ON_STOP (app no longer visible: home press, screen off,
+     * another app on top). Stand down every in-process poller so Tail does
+     * ZERO network while hidden — the launcher-era contract. The next
+     * ON_START resumes them. The 24 h Garmin loop is included for
+     * completeness even though it would rarely tick.
+     */
+    fun onAppStopped() {
+        isAppVisible = false
+        chessComPollingJob?.cancel()
+        githubPollingJob?.cancel()
+        garminPollingJob?.cancel()
     }
 
     /**
@@ -3067,11 +3114,59 @@ class HabitViewModel(
                     Log.w(TAG, "onAppForegrounded: text-input backup bootstrap failed: ${e.message}")
                 }
             }
+
+            // ── Day-rollover catch-ups (launcher policy, 2026-11-25) ───────
+            // Both replaced a hidden midnight wakeup. Each is gated on the
+            // day having actually changed, so on the dozens of normal
+            // same-day re-entries they cost one prefs/DataStore read.
+            runDailyCatchUps()
         }
         // Log current position as a secondary location for today.
         // Runs in the background — silently no-ops if permission is missing
         // or the label duplicates an existing entry.
         logSecondaryLocationOnForeground()
+    }
+
+    /**
+     * Day-rollover catch-ups that replaced the two retired midnight alarms
+     * (WallpaperAlarmReceiver + ChessFreeplayAlarmReceiver, 2026-11-25).
+     * Runs at most once per calendar day, on whatever foreground first
+     * notices the new day — for a launcher that is the first home press of
+     * the morning, i.e. BEFORE the user could ever notice stale state.
+     *
+     *  - Wallpaper: re-applies the image for the new day's points.
+     *    refresh() is a cheap no-op when the day hasn't changed, so this is
+     *    safe even if the gate were somehow bypassed.
+     *  - Chess freeplay: the ledger already accrues lazily on every read;
+     *    the explicit call just banks the ticket the moment the week starts
+     *    rather than on the first menu open.
+     *  - Environment: the resume-mode gap sweep (needsFetch) covers a day
+     *    Tail was never opened at all — the one case the foreground
+     *    refreshEnvironment(today) path can't see. No network when complete.
+     */
+    private suspend fun runDailyCatchUps() {
+        val today = LocalDate.now().toString()
+        val prefs = context.getSharedPreferences(PREFS_CATCHUP, Context.MODE_PRIVATE)
+        if (prefs.getString(KEY_CATCHUP_DAY, "") == today) return
+        // Mark first: a failure below must not turn into a per-foreground retry storm.
+        prefs.edit().putString(KEY_CATCHUP_DAY, today).apply()
+        try {
+            val status = com.example.tail.wallpaper.WallpaperRefresher.refresh(context)
+            if (status.isNotBlank()) Log.i(TAG, "Daily wallpaper catch-up: $status")
+        } catch (e: Exception) {
+            Log.w(TAG, "Daily wallpaper catch-up failed: ${e.message}")
+        }
+        try {
+            val balance = com.example.tail.widget.ChessFreeplayStore.accrueWeekly(context)
+            Log.i(TAG, "Daily freeplay accrual — balance now $balance")
+        } catch (e: Exception) {
+            Log.w(TAG, "Daily freeplay accrual failed: ${e.message}")
+        }
+        try {
+            if (_settings.value.environmentEnabled) fetchEnvironmentFullBacklog(repair = false)
+        } catch (e: Exception) {
+            Log.w(TAG, "Daily environment catch-up failed: ${e.message}")
+        }
     }
 
     /**
@@ -3320,7 +3415,7 @@ class HabitViewModel(
         viewModelScope.launch { settingsRepo.saveValueDisplayLabels(current) }
     }
 
-    /** Starts the periodic chess.com polling loop. */
+    /** Starts the periodic chess.com polling loop (runs only while visible). */
     internal fun startChessComPolling() {
         // Cancel any existing polling job
         chessComPollingJob?.cancel()
@@ -3329,7 +3424,7 @@ class HabitViewModel(
             // Chess Readiness activity log so the stats page covers the
             // whole account, not just the months since this feature shipped.
             backfillChessComHistoryOnce()
-            while (true) {
+            while (isAppVisible) {
                 syncChessComCurrentMonth()
                 delay(CHESS_COM_POLL_INTERVAL_MS)
             }
@@ -4188,13 +4283,26 @@ class HabitViewModel(
         }
     }
 
-    /** Starts the periodic GitHub polling loop. */
+    /**
+     * True while the app is visible (ON_START … ON_STOP).
+     *
+     * Launcher battery policy (2026-11-25): the chess.com / GitHub pollers
+     * live in viewModelScope, which for a launcher Activity is effectively
+     * immortal — without this flag they kept polling all night while Tail
+     * was hidden. The loops now exit on their own when it flips false, and
+     * [resumeBackgroundPollers] relaunches them on the next ON_START.
+     */
+    @Volatile
+    internal var isAppVisible: Boolean = false
+        private set
+
+    /** Starts the periodic GitHub polling loop (runs only while visible). */
     internal fun startGithubPolling() {
         githubPollingJob?.cancel()
         githubPollingJob = viewModelScope.launch {
             // Initial sync shortly after start
             delay(5_000)
-            while (true) {
+            while (isAppVisible) {
                 syncGithubRecent()
                 delay(GITHUB_POLL_INTERVAL_MS)
             }
@@ -4316,12 +4424,12 @@ class HabitViewModel(
         }
     }
 
-    /** Starts the periodic Garmin polling loop. */
+    /** Starts the periodic Garmin polling loop (runs only while visible). */
     internal fun startGarminPolling() {
         // Cancel any existing polling job
         garminPollingJob?.cancel()
         garminPollingJob = viewModelScope.launch {
-            while (true) {
+            while (isAppVisible) {
                 syncGarminCurrentMonth()
                 delay(GARMIN_POLL_INTERVAL_MS)
             }

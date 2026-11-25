@@ -460,11 +460,9 @@ class FloatingBubbleService : Service() {
         // Start the PC widget event queue poll (short first delay so a
         // freshly-started bubble picks up queued events quickly).
         handler.postDelayed(pcEventPollRunnable, 5_000L)
-        // Keep the weekly chess freeplay ticket EAGER: (re)register the
-        // Monday-midnight accrual alarm whenever the (long-lived) bubble
-        // service comes up — cheap, idempotent, and covers the case where
-        // BOOT_COMPLETED was missed (e.g. process-start ordering).
-        ChessFreeplayAlarmReceiver.scheduleNext(this)
+        // (Removed 2026-11-25) The weekly chess-freeplay accrual alarm was
+        // retired: ChessFreeplayStore.accrueWeekly is lazy on every read, so
+        // the eager Monday-midnight wakeup bought nothing but battery.
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

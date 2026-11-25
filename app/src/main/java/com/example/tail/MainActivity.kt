@@ -205,28 +205,23 @@ class MainActivity : ComponentActivity() {
         // died (process kill, APK update, OEM cleanup). No-op when off/running.
         com.example.tail.widget.StatsOverlayService.ensureRunning(applicationContext)
 
-        // Background bridge sync: TailCue predictive warnings (cues) + the
-        // movie cache in ONE hourly pass (merged 2026-11-19; was two separate
-        // 15-min pollers — the cause of the constant background traffic and
-        // battery drain). Skips itself when offline (CONNECTED constraint:
-        // airplane mode = zero wakeups) or when battery is low, and stands
-        // down within 50 min of any foreground sync (see onResume). UPDATE
-        // policy upgrades old installs and cancels the legacy movie poller.
-        com.example.tail.notify.TailCueSyncWorker.schedule(applicationContext)
-
-        // Keep the phone-local Garmin cache warm even when the app is closed.
-        // Previously Garmin only synced while the main UI was open (foreground
-        // hook + a viewModelScope polling loop that died with the Activity and
-        // was only started when settings were saved) — so Garmin data silently
-        // went stale while movie/PC-widget sync kept working. 2026-09-26.
-        com.example.tail.notify.GarminSyncWorker.schedule(applicationContext)
-
-        // Daily environment self-heal: gap-resuming backlog run that captures
-        // any day the in-app flow missed (app not opened, network flake,
-        // settings-restore dropping the master switch — which silently
-        // stalled the env habits for 11 days, 2026-10-05 → 2026-10-16).
-        // KEEP policy; already-captured days cost nothing.
-        com.example.tail.notify.EnvironmentBacklogWorker.scheduleDaily(applicationContext)
+        // ── Background work policy (launcher era, 2026-11-25) ──────────────
+        // Tail is now the HOME app: it is opened dozens of times a day, so a
+        // periodic schedule is pure waste — every periodic poller already has
+        // a foreground equivalent (onResume / onAppForegrounded /
+        // onAppStarted), and the launcher lifecycle guarantees those run often.
+        // The periodic enqueues are therefore NOT just stopped but actively
+        // CANCELLED here, so upgraded installs drop the schedules that older
+        // builds left in WorkManager's database. Zero network wakeups while
+        // the app is hidden; the only background work left is:
+        //   • PhoneUsageWorker  — 4 h, LOCAL only (no radio). UsageStats
+        //     keeps ~7 days of events; without a periodic run, days are lost
+        //     for good if the app isn't opened in time.
+        //   • Habit-ask / app-stats alarms — the notifications the user
+        //     explicitly scheduled. That IS the feature.
+        //   • WidgetTriggerService + watchdog — must run while OTHER apps
+        //     are in the foreground; cannot be gated on our own foreground.
+        com.example.tail.notify.BackgroundWorkPolicy.retirePeriodicSync(applicationContext)
 
         // Phone usage: ~4 h UsageStats aggregation (limited ~7-day event
         // history means days are lost without frequent runs). KEEP policy.
@@ -546,6 +541,17 @@ private fun TailApp(
                     }
                 }
                 Lifecycle.Event.ON_RESUME -> viewModel.onAppForegrounded()
+                Lifecycle.Event.ON_STOP -> {
+                    // Launcher battery policy (2026-11-25): the in-process
+                    // chess.com / GitHub pollers live in viewModelScope, which
+                    // — for a launcher Activity that is effectively immortal —
+                    // meant they kept hitting the network all night while the
+                    // app was hidden. ON_STOP fires once the app is no longer
+                    // visible (home press, screen off, another app on top);
+                    // cancelling there means ZERO network while hidden, and
+                    // the next ON_START simply resumes the loop.
+                    viewModel.onAppStopped()
+                }
                 else -> Unit
             }
         }

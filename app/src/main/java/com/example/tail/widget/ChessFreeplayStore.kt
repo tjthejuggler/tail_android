@@ -232,12 +232,14 @@ object ChessFreeplayStore {
     // ── Grants journal (append-only week indexes) ──────────────────────────
 
     /**
-     * EAGER weekly accrual for the Monday-midnight alarm
-     * ([ChessFreeplayAlarmReceiver]): settles every expired provisional
-     * spend, sweeps the grants journal for the newly-started week, and
-     * returns the resulting balance. Purely a driver around the exact
-     * same lazy logic every reader already runs — idempotent, safe to
-     * call at any time.
+     * EAGER weekly accrual: settles every expired provisional spend, sweeps
+     * the grants journal for the newly-started week, and returns the
+     * resulting balance. Purely a driver around the exact same lazy logic
+     * every reader already runs — idempotent, safe to call at any time.
+     *
+     * Driven once per day from the foreground catch-up
+     * (HabitViewModel.runDailyCatchUps) since the Monday-midnight alarm was
+     * retired in the launcher-era background-work policy (2026-11-25).
      */
     fun accrueWeekly(context: Context): Int {
         return try {

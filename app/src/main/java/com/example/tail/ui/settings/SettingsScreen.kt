@@ -173,7 +173,6 @@ import com.example.tail.ui.viewmodel.testChessAnalysisPipeline
 import com.example.tail.ui.viewmodel.testGarminConnection
 import com.example.tail.ui.viewmodel.toggleCompanionReadHabit
 import com.example.tail.ui.viewmodel.toggleInuitTextHabit
-import com.example.tail.wallpaper.WallpaperAlarmReceiver
 import com.example.tail.wallpaper.WallpaperRefresher
 import com.example.tail.widget.ChessReadinessStore
 import java.io.File
@@ -1825,8 +1824,9 @@ private fun WallpaperSettingsSection(
                 onCheckedChange = {
                     enabled = it
                     viewModel.saveWallpaperSettings(enabled = it)
-                    if (it) WallpaperAlarmReceiver.scheduleNext(context)
-                    else WallpaperAlarmReceiver.cancel(context)
+                    // The midnight alarm was retired 2026-11-25 (launcher
+                    // policy): the day-rollover refresh now runs on every
+                    // app foreground (HabitViewModel.onAppForegrounded).
                 }
             )
         }
@@ -1852,7 +1852,7 @@ private fun WallpaperSettingsSection(
                 }
             }
             Text(
-                text = "Refreshes automatically as points change and once a day after midnight.",
+                text = "Refreshes automatically as points change, and when you next open Tail after midnight.",
                 fontSize = 9.sp,
                 color = Color(0xFF666666)
             )

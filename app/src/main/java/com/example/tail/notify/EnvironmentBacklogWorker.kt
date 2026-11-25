@@ -5,7 +5,6 @@ import android.util.Log
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
@@ -219,26 +218,10 @@ class EnvironmentBacklogWorker(appContext: Context, params: WorkerParameters) :
             )
         }
 
-        /**
-         * Daily self-heal: the same gap-resuming backlog run as a PERIODIC
-         * job (KEEP policy — re-launches never reset the clock). Days
-         * already captured are skipped in O(1) via
-         * [EnvironmentRepository.needsFetch], so a normal day costs a
-         * handful of prefs reads and one range request for the new day.
-         * This guarantees the env habits can never silently stall again
-         * just because the app wasn't opened on the right screen, or a
-         * transient failure was never retried.
-         */
-        fun scheduleDaily(context: Context) {
-            val request = PeriodicWorkRequestBuilder<EnvironmentBacklogWorker>(1, TimeUnit.DAYS)
-                .setConstraints(
-                    Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
-                )
-                .setInputData(workDataOf(KEY_REPAIR to false))
-                .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME + "_daily", ExistingPeriodicWorkPolicy.KEEP, request
-            )
-        }
+        // scheduleDaily() was retired 2026-11-25 (BackgroundWorkPolicy): as a
+        // launcher, Tail's onAppForegrounded catch-up sweep
+        // (com.example.tail.data.environment.EnvironmentCatchUp) runs the
+        // same needsFetch gap check on every foreground — far more often
+        // and better-timed than a once-a-day wakeup, with zero hidden cost.
     }
 }

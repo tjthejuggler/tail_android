@@ -4,11 +4,9 @@ import android.content.Context
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -24,10 +22,9 @@ import com.example.tail.data.remoteBridgeConnectionFrom
 import com.example.tail.data.tailcue.TailCue
 import com.example.tail.data.tailcue.TailCueService
 import kotlinx.coroutines.flow.first
-import java.util.concurrent.TimeUnit
 
 /**
- * Background bridge sync: TailCue warnings + movie cache in ONE pass.
+ * Bridge sync: TailCue warnings + movie cache in ONE pass.
  *
  * TailCue (on the PC) pushes predictive warnings ("cues") to the Tail bridge
  * whenever something noticed today raises the chance of something upcoming —
@@ -41,18 +38,18 @@ import java.util.concurrent.TimeUnit
  * ([HabitAsks.checkAndPostMovieAsk]), so the "Watched this?" notification is
  * usually already waiting when the user picks up the phone.
  *
- * ## Battery design (2026-11-19)
- *  - **Once an hour**, one wakeup for everything (was: two separate 15-min
- *    pollers ≈ 192 network wakeups/day; now ≈ 24).
+ * ## Battery design (launcher era, 2026-11-25)
+ *  - **Foreground-only.** The hourly periodic schedule was retired (see
+ *    [BackgroundWorkPolicy]): Tail is the HOME app and is opened dozens of
+ *    times a day, so the ON_RESUME one-shot ([syncNow]) is a far better
+ *    timed trigger than any period. ZERO network wakeups while hidden.
  *  - **No connectivity = no work at all.** The CONNECTED constraint means
  *    WorkManager never wakes the process in airplane mode / without data;
  *    the run is simply deferred until a network appears.
- *  - **Foreground suppression.** A periodic pass that finds a pass hit any
- *    bridge within the last [SKIP_IF_SYNCED_WITHIN_MS] skips the network
- *    entirely — opening the app (which triggers [syncNow]) effectively
- *    pushes the next background check an hour out.
- *  - **Battery gate.** The periodic schedule requires battery-not-low, so a
- *    nearly-dead phone spends its remaining charge on anything but syncing.
+ *  - The periodic-pass bookkeeping ([KEY_PERIODIC] /
+ *    [SKIP_IF_SYNCED_WITHIN_MS]) is kept so a stale periodic work item on an
+ *    upgraded install still stands down cheaply if it ever fires before
+ *    [BackgroundWorkPolicy.retirePeriodicSync] cancels it.
  *
  * An unreachable bridge is not an error — the next periodic pass retries.
  * 👍/👎/notes on cues are sent from the notification center rows (see
@@ -217,42 +214,12 @@ class TailCueSyncWorker(appContext: Context, params: WorkerParameters) :
         private const val SKIP_IF_SYNCED_WITHIN_MS = 50 * 60 * 1000L
 
         /**
-         * Idempotently schedules the periodic sync (1 h, any network,
-         * battery not low).
-         *
-         * UPDATE (not KEEP) so an already-installed schedule from an older
-         * build (15 min period — the cause of constant background traffic
-         * and battery drain, 2026-11-19) is actually replaced on upgrade;
-         * with an unchanged spec UPDATE behaves like KEEP (no reset).
-         */
-        fun schedule(context: Context) {
-            val wm = WorkManager.getInstance(context)
-            wm.cancelUniqueWork(LEGACY_MOVIE_WORK_NAME)
-            wm.cancelUniqueWork(LEGACY_MOVIE_NOW_WORK_NAME)
-            val request = PeriodicWorkRequestBuilder<TailCueSyncWorker>(1, TimeUnit.HOURS)
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .setRequiresBatteryNotLow(true)
-                        .build()
-                )
-                .setInputData(workDataOf(KEY_PERIODIC to true))
-                .build()
-            wm.enqueueUniquePeriodicWork(
-                UNIQUE_WORK_NAME,
-                ExistingPeriodicWorkPolicy.UPDATE,
-                request
-            )
-            Log.i(TAG, "TailCue + movie bridge sync scheduled (1 h period)")
-        }
-
-        /**
          * Immediate one-shot pass for when the app is actually open
-         * (activity resume) — keeps the hourly background cadence cheap
-         * while still feeling instant in the foreground. KEEP policy means
-         * rapid re-entries never stack duplicate runs; a failed pass simply
-         * waits for the next hourly period. No battery gate — the user just
-         * deliberately opened the app.
+         * (activity resume) — the ONLY trigger since the launcher-era
+         * background-work policy (2026-11-25) retired the hourly periodic
+         * schedule. KEEP policy means rapid re-entries never stack duplicate
+         * runs; a failed pass simply waits for the next foreground. No
+         * battery gate — the user just deliberately opened the app.
          */
         fun syncNow(context: Context) {
             val request = OneTimeWorkRequestBuilder<TailCueSyncWorker>()
