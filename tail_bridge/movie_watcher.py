@@ -102,6 +102,12 @@ ASSIST_EVENTS_FILE = os.environ.get(
 # newly appears is a viewing start, and when the fd disappears the viewing
 # ends. This catches every playback method.
 VLC_FD_ENABLED = os.environ.get("MOVIE_VLC_FD", "1") == "1"
+# In-progress surfacing (2026-11-25): a video fd open for at least this long
+# is written to the cache WHILE still playing, so the phone's next foreground
+# sync sees the movie ~1 min after playback starts instead of only after VLC
+# closes. Repeat polls dedup via _session_seen (constant start); the row
+# emitted on fd close FINALIZES that session's end time (finalize_sessions).
+VLC_PROGRESS_MIN_SEC = int(os.environ.get("MOVIE_VLC_PROGRESS_AFTER", "60"))
 # Two events for the same file within this window are considered the SAME
 # viewing (launch-vs-KDE-write jitter).
 ASSIST_DEDUP_WINDOW_SEC = int(os.environ.get("MOVIE_ASSIST_DEDUP_WINDOW", "180"))
@@ -284,6 +290,11 @@ def _kde_has_event(filepath: str, start: int) -> bool:
 # path -> first-seen unix ts for files currently open by a VLC process
 _vlc_active: Dict[str, int] = {}
 
+# path -> start ts of the in-progress session ALREADY surfaced to the cache
+# this process lifetime (prevents re-emitting — and re-logging — every poll;
+# a watcher restart re-emits safely because _session_seen dedups).
+_vlc_progress_emitted: Dict[str, int] = {}
+
 
 def _vlc_pids() -> List[int]:
     """PIDs of running VLC processes."""
@@ -304,9 +315,13 @@ def _vlc_pids() -> List[int]:
     return pids
 
 
-def _vlc_open_videos() -> set:
-    """Set of video file paths currently open by any VLC process."""
-    open_files = set()
+def _vlc_open_video_fds() -> Dict[str, int]:
+    """Video file paths currently open by any VLC process, mapped to the
+    fd's OPEN time (unix ts). The /proc fd symlink's ctime is when the fd
+    was created, i.e. the real viewing start — this survives a watcher
+    restart mid-viewing (a fresh process surfaces the true start, not the
+    restart time)."""
+    open_files: Dict[str, int] = {}
     for pid in _vlc_pids():
         fd_dir = f"/proc/{pid}/fd"
         try:
@@ -314,12 +329,14 @@ def _vlc_open_videos() -> set:
         except (OSError, PermissionError):
             continue
         for fd in fds:
+            fd_path = os.path.join(fd_dir, fd)
             try:
-                target = os.path.realpath(os.path.join(fd_dir, fd))
+                target = os.path.realpath(fd_path)
+                opened = int(os.lstat(fd_path).st_ctime)
             except OSError:
                 continue
             if _is_video_path(target) and os.path.exists(target):
-                open_files.add(target)
+                open_files[target] = opened
     return open_files
 
 
@@ -327,36 +344,112 @@ def collect_vlc_rows() -> List[Tuple[int, int, str]]:
     """
     Detect live VLC playback via open file descriptors.
 
-    A video fd that newly appeared since the last poll marks a viewing
-    start; when it disappears, the viewing ends. Returns completed
-    (start, end, path) rows. Files still playing stay pending until the
-    fd closes (their real start time is remembered in _vlc_active).
+    Returns COMPLETED (start, end, path) rows — one per finished viewing.
+    Completed rows must carry the SAME start the in-progress surface used,
+    so the close row finalizes that session instead of adding a duplicate.
+
+    In-progress: a fd open for >= [VLC_PROGRESS_MIN_SEC] is also returned
+    via [collect_vlc_progress] (called separately by poll_once) — see the
+    in-progress surfacing note at VLC_PROGRESS_MIN_SEC.
     """
     if not VLC_FD_ENABLED:
         return []
     now = int(time.time())
     try:
-        current = _vlc_open_videos()
+        current = _vlc_open_video_fds()
     except Exception as e:
         logger.debug(f"VLC fd scan failed: {e}")
         return []
 
-    # Register newly-opened files
-    for path in current:
-        if path not in _vlc_active:
-            _vlc_active[path] = now
+    # Register newly-opened files — prefer the fd's true open time over
+    # first-poll time so a watcher restart mid-viewing keeps the real start.
+    for path, opened in current.items():
+        if path not in _vlc_active or opened < _vlc_active[path]:
+            _vlc_active[path] = opened
 
     rows: List[Tuple[int, int, str]] = []
     for path in list(_vlc_active):
         if path in current:
             continue  # still playing
         start = _vlc_active.pop(path)
-        end = now
+        end = max(now, start + 60)
         # Ignore sub-minute blips (fd opened and closed between polls of a
         # file that was skipped/errored, or VLC probing metadata).
         if end - start >= 60:
             rows.append((start, end, path))
     return rows
+
+
+def collect_vlc_progress() -> List[Tuple[int, int, str]]:
+    """
+    In-progress rows for viewings open >= [VLC_PROGRESS_MIN_SEC] that have
+    not been surfaced yet this process lifetime. Emitted with
+    end = start + VLC_PROGRESS_MIN_SEC (a honest "at least this long"
+    duration); the completed row on fd close finalizes the end in place.
+    """
+    if not VLC_FD_ENABLED:
+        return []
+    now = int(time.time())
+    try:
+        current = _vlc_open_video_fds()
+    except Exception as e:
+        logger.debug(f"VLC fd scan failed: {e}")
+        return []
+
+    for path, opened in current.items():
+        if path not in _vlc_active or opened < _vlc_active[path]:
+            _vlc_active[path] = opened
+
+    rows: List[Tuple[int, int, str]] = []
+    for path, opened in _vlc_active.items():
+        if path not in current:
+            continue  # closed — collect_vlc_rows owns the completed row
+        if path in _vlc_progress_emitted:
+            continue  # already surfaced; dedup via _session_seen anyway
+        if now - opened >= VLC_PROGRESS_MIN_SEC:
+            _vlc_progress_emitted[path] = opened
+            rows.append((opened, opened + VLC_PROGRESS_MIN_SEC, path))
+            logger.debug(f"In-progress VLC viewing candidate: "
+                         f"{os.path.basename(path)} (open {now - opened}s)")
+    return rows
+
+
+def finalize_sessions(cache: Dict[str, Any],
+                      rows: List[Tuple[int, int, str]]) -> int:
+    """
+    FINALIZE in-place: for completed VLC rows whose (filepath, start)
+    session already exists in the cache (written earlier by the in-progress
+    surface), update that session's end/duration instead of appending a
+    second session. Returns the number of sessions finalized. Unmatched
+    rows are left for the normal merge path (fresh KDE/assist rows).
+    """
+    if not rows:
+        return 0
+    finalized = 0
+    for start, end, path in rows:
+        for entry in cache.get("movies", []):
+            for s in entry.get("sessions", []):
+                if s.get("filepath") != path:
+                    continue
+                su = s.get("start_unix") or 0
+                if su and abs(su - start) <= ASSIST_DEDUP_WINDOW_SEC:
+                    old_end = s.get("end_unix") or 0
+                    if end > old_end:
+                        s["end"] = _unix_to_str(end)
+                        s["end_unix"] = end
+                        s["duration_min"] = _duration_min(start, end)
+                        finalized += 1
+    if finalized:
+        # Derived fields are (re)computed below by the caller's merge;
+        # recompute totals here too so a finalize-only poll stays correct.
+        for entry in cache.get("movies", []):
+            sessions = entry.get("sessions", [])
+            entry["last_watched"] = sessions[-1]["start"] if sessions else ""
+            entry["total_watch_min"] = sum(
+                s["duration_min"] for s in sessions if s["duration_min"] is not None
+            ) or None
+        logger.info(f"Finalized {finalized} in-progress session(s) with real end time(s)")
+    return finalized
 
 
 def load_assist_events() -> List[Tuple[int, int, str]]:
@@ -631,32 +724,63 @@ def poll_once() -> int:
                         f"from {ASSIST_EVENTS_FILE}")
 
     # Live VLC playback (drag-dropped / opened inside a running instance —
-    # invisible to both the KDE DB and the assist launcher).
+    # invisible to both the KDE DB and the assist launcher). Progress rows
+    # surface a viewing WHILE it plays; completed rows finalize real ends.
+    vlc_progress = collect_vlc_progress()
     vlc_raw = collect_vlc_rows()
     vlc_rows: List[Tuple[int, int, str]] = []
+    progress_rows: List[Tuple[int, int, str]] = []
+    if vlc_progress:
+        cache_probe = load_cache()
+        for start, end, path in vlc_progress:
+            if _kde_has_event(path, start):
+                continue
+            if _session_seen(cache_probe, path, start):
+                continue
+            progress_rows.append((start, end, path))
+        if progress_rows:
+            logger.info(f"Surfacing {len(progress_rows)} in-progress VLC "
+                        f"viewing(s) to the cache")
+    finalize_rows: List[Tuple[int, int, str]] = []
     if vlc_raw:
         cache_probe = load_cache()
         batch_keys = {(s, p) for s, _e, p in assist_rows}
         for start, end, path in vlc_raw:
+            # The in-progress lifecycle for this path ends here either way.
+            surfaced_start = _vlc_progress_emitted.pop(path, None)
             if (start, path) in batch_keys:
                 continue
             if _kde_has_event(path, start):
                 logger.info(f"VLC playback already in KDE DB — skipped: {path}")
                 continue
             if _session_seen(cache_probe, path, start):
-                logger.info(f"VLC playback already cached — skipped: {path}")
+                # The session is already in the cache — written earlier by
+                # the in-progress surface (or a prior run). Update its end
+                # in place instead of appending a duplicate session.
+                finalize_rows.append((start, end, path))
                 continue
             vlc_rows.append((start, end, path))
+        if finalize_rows:
+            logger.info(f"Finalizing {len(finalize_rows)} in-progress "
+                        f"session(s) with real end time(s)")
         if vlc_rows:
             logger.info(f"Detected {len(vlc_rows)} live VLC playback event(s)")
 
-    if not rows and not assist_rows and not vlc_rows:
+    if not rows and not assist_rows and not vlc_rows and not progress_rows:
+        if finalize_rows:
+            # Finalize-only poll: nothing new to merge, but the still-cached
+            # in-progress session(s) need their real end times.
+            cache = load_cache()
+            if finalize_sessions(cache, finalize_rows):
+                cache["metadata"]["last_updated"] = datetime.now().astimezone(
+                ).strftime("%Y-%m-%dT%H:%M:%S")
+                save_cache(cache)
         return 0
 
     if rows:
         logger.info(f"Found {len(rows)} new video event(s) since start={last_seen}")
 
-    all_rows = rows + assist_rows + vlc_rows
+    all_rows = rows + assist_rows + vlc_rows + progress_rows
     new_entries = process_rows(all_rows)
     # The high-water mark tracks KDE DB rows ONLY: assist rows never come
     # from the KDE DB, so advancing the mark with them could mask a KDE row
@@ -664,6 +788,12 @@ def poll_once() -> int:
     max_start = max((r[0] for r in rows), default=last_seen)
 
     if not new_entries:
+        if finalize_rows:
+            cache = load_cache()
+            if finalize_sessions(cache, finalize_rows):
+                cache["metadata"]["last_updated"] = datetime.now().astimezone(
+                ).strftime("%Y-%m-%dT%H:%M:%S")
+                save_cache(cache)
         if max_start > last_seen:
             save_state(max_start)
         return 0
@@ -672,6 +802,11 @@ def poll_once() -> int:
     cache = load_cache()
     existing = cache.get("movies", [])
 
+    # Finalize BEFORE merging: completed VLC rows whose session was already
+    # written by the in-progress surface get their real end time in place;
+    # whatever remains flows through the normal merge (dedup keeps it clean).
+    if finalize_rows:
+        finalize_sessions(cache, finalize_rows)
     truly_new, merged_existing = merge_entries(existing, new_entries)
 
     if truly_new:
