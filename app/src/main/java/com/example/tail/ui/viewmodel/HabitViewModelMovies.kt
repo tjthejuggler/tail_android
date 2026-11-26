@@ -740,9 +740,7 @@ internal suspend fun HabitViewModel.updateImdbSecondaryValues(habitName: String)
     cachedPhoneDb = mutableDb
 
     if (fileUri.isNotEmpty()) {
-        withContext(Dispatchers.IO) {
-            habitsRepo.persistDatabase(Uri.parse(fileUri), context, mutableDb)
-        }
+        persistSnapshotRebased(Uri.parse(fileUri), mutableDb, label = "vm-snapshot")
     }
 
     Log.d(TAG, "IMDb secondary values updated for '$habitName': ${secEntries.size} days")
@@ -1328,9 +1326,7 @@ fun HabitViewModel.importMeditationData(jsonFile: File, onComplete: (String) -> 
             cachedPhoneDb = mutableDb
             rebuildHabitList()
 
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(uriString), context, mutableDb)
-            }
+            persistSnapshotRebased(Uri.parse(uriString), mutableDb, label = "vm-snapshot")
 
             val msg = "Imported: $minutesAdded minutes entries, $sessionsAdded session entries"
             Log.d(TAG, "Meditation import: $msg")

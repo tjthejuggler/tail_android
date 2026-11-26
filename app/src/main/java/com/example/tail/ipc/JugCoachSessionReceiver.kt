@@ -211,7 +211,10 @@ class JugCoachSessionReceiver : BroadcastReceiver() {
                                     continue
                                 }
                             }
-                            habitsRepo.incrementHabitForDate(uri, appContext, targetKey, feedAmount, java.time.LocalDate.now())
+                            habitsRepo.incrementHabitForDate(
+                                uri, appContext, targetKey, feedAmount, java.time.LocalDate.now(),
+                                stamps = if (targetKey == linkedName) listOf(HabitTimestampRepository.nowTime()) else emptyList()
+                            )
                             HabitIncrementBus.emit(linkedName)
                             Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName', feeds $valueKey +$feedAmount)")
 

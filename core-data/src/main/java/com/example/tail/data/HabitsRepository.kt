@@ -4,7 +4,9 @@ import android.content.Context
 import android.net.Uri
 import android.util.Log
 import com.example.tail.data.backup.HabitsSnapshotManager
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -308,7 +310,7 @@ class HabitsRepository {
      *        synced ("wts") so the bytes are on stable storage before we return,
      *        shrinking the interruption window as much as SAF allows.
      */
-    suspend fun saveDatabase(uri: Uri, context: Context, db: HabitsDatabase) =
+    suspend fun saveDatabase(uri: Uri, context: Context, db: HabitsDatabase): Boolean =
         withContext(Dispatchers.IO) {
             // ── ZERO-COPY SAVE PATH (OOM fix, 2026-09-23) ─────────────────────
             // Nothing in this function ever holds the document as a String.
@@ -344,7 +346,11 @@ class HabitsRepository {
                                 "$onDiskEntryCount on-disk entries with only $newEntryCount new entries. " +
                                 "This save has been BLOCKED to prevent data loss."
                     )
-                    return@withContext
+                    // The guard BLOCKED this write. Report it: a caller that
+                    // assumes success would record a timestamp / emit events
+                    // for a count that never reached the file (the
+                    // "timestamp but no point" bug).
+                    return@withContext false
                 }
                 recordGoodEntryCount(onDiskEntryCount)
             } else {
@@ -365,7 +371,7 @@ class HabitsRepository {
                                 "entries when high-water mark is $baseline. BLOCKED to prevent " +
                                 "the transient-read-failure wipe."
                     )
-                    return@withContext
+                    return@withContext false
                 }
                 Log.w(
                     TAG,
@@ -427,6 +433,7 @@ class HabitsRepository {
             } else {
                 staged?.discard()
             }
+            wrote
         }
 
     /**
@@ -690,98 +697,238 @@ class HabitsRepository {
 
     /**
      * Writes [db] to disk at [uri]. Call this after an optimistic in-memory update.
+     * Returns true only on a confirmed write — see [saveDatabase].
      */
-    suspend fun persistDatabase(uri: Uri, context: Context, db: HabitsDatabase) =
+    suspend fun persistDatabase(uri: Uri, context: Context, db: HabitsDatabase): Boolean =
         saveDatabase(uri, context, db)
 
     /**
-     * Increments the count for a habit on [date] by [amount], then saves.
-     * Performs atomic read-modify-write (reads from disk first).
+     * Persists a WHOLE-FILE snapshot built from [base] (the caller's view of
+     * the file when it started) with 3-WAY REBASE semantics.
      *
-     * SAFETY: If the load fails for any reason, this method LOGS and returns
-     * the empty map WITHOUT writing — so a transient SAF error during a habit
-     * tap never wipes out the file. Prefer [applyIncrementToDb] + [persistDatabase]
-     * for optimistic UI updates that are guaranteed not to lose data.
+     * Background syncs (chess.com, Garmin, GitHub, phone usage, environment)
+     * build a new DB from the ViewModel's cached snapshot, mutate it and
+     * persist the whole file. If an increment (widget tap, bubble timer, IPC
+     * broadcast) landed on disk in the meantime, that persist wrote the
+     * increment back out of existence — verified on disk: the 2026-11-25
+     * sync-conflict copy holds `Blitz Chess 11-17 = 29`, the live file `14`.
+     *
+     * Here, [base] is the caller's stale snapshot and [desired] its edited
+     * version. Under the file mutex, the CURRENT disk state is loaded and,
+     * for every slot the caller did not change (`desired == base`), the disk
+     * value wins; slots the caller DID change keep its value. Nothing that
+     * changed on disk behind the caller's back is reverted. The write is
+     * then verified with a fresh read (see [mutateHabitFileVerified]).
+     *
+     * [forceHabits]: habits whose entries are taken WHOLESALE from [desired]
+     * (authoritative SET-style writers, e.g. a reset-to-zero or an absolute
+     * value sync — those legitimately lower values and own the whole habit).
+     *
+     * @return true on a verified write; false if the write did not land.
+     */
+    suspend fun persistDatabaseRebased(
+        uri: Uri,
+        context: Context,
+        base: HabitsDatabase,
+        desired: HabitsDatabase,
+        label: String,
+        forceHabits: Set<String> = emptySet()
+    ): Boolean {
+        val outcome = mutateHabitFileVerified(uri, context, label = label) { disk ->
+            rebaseSnapshot(base, desired, disk, forceHabits)
+        }
+        if (!outcome.wrote) {
+            Log.e(TAG, "$label: rebased persist FAILED (kept on-disk state intact): ${outcome.error?.message}")
+        }
+        return outcome.wrote
+    }
+
+    /** Outcome of a [mutateHabitFileVerified] cycle. */
+    data class VerifiedWrite(
+        /** True when the mutation is reflected on disk (written+verified, or nothing to write). */
+        val wrote: Boolean,
+        /** Fresh on-disk DB after the attempt (pre-write state on failure). */
+        val onDisk: HabitsDatabase,
+        /** The state the mutation proposed, or null when it made no change. */
+        val proposed: HabitsDatabase?,
+        /** Why the write failed — null on success. */
+        val error: Throwable? = null
+    )
+
+    /** Retry attempts for the verified read-modify-write cycle. */
+    private val VERIFIED_WRITE_ATTEMPTS = 4
+    private val VERIFIED_WRITE_BACKOFF_MS = 250L
+
+    /**
+     * VERIFIED read-modify-write of the habits file — the one primitive every
+     * count-changing path should go through.
+     *
+     * Per attempt, under the file mutex:
+     *  1. load the CURRENT file from disk (fresh — never the identity cache),
+     *  2. let [mutate] produce the new state (null = nothing to write),
+     *  3. write it,
+     *  4. re-read the file FROM DISK (cache bypassed) and hand it to [verify].
+     *
+     * A failed write or verification is retried with backoff; [mutate] always
+     * sees the newest disk state, so a concurrent writer that landed in
+     * between is never clobbered.
+     *
+     * WHY: `saveDatabase` used to return Unit and silently do nothing when the
+     * SAF write failed or the anti-shrinkage guard blocked, and the old
+     * "verify" re-read the identity-cached graph the save had just published
+     * — it confirmed the in-memory state, not the disk. Callers then recorded
+     * a timestamp for a point that never landed.
+     */
+    suspend fun mutateHabitFileVerified(
+        uri: Uri,
+        context: Context,
+        label: String,
+        verify: (freshDisk: HabitsDatabase, proposed: HabitsDatabase) -> Boolean =
+            { fresh, proposed -> proposed.all { (k, dates) -> dates.all { (d, v) -> (fresh[k]?.get(d) ?: 0) == v } } },
+        mutate: (HabitsDatabase) -> HabitsDatabase?
+    ): VerifiedWrite = withContext(Dispatchers.IO) {
+        var lastDisk: HabitsDatabase = emptyMap()
+        var lastProposed: HabitsDatabase? = null
+        var lastError: Throwable? = null
+        repeat(VERIFIED_WRITE_ATTEMPTS) { i ->
+            val attempt = i + 1
+            val res: VerifiedWrite? = try {
+                fileMutex.withLock {
+                    val load = loadDatabaseFresh(uri, context)
+                    if (load !is HabitsLoadResult.Success) {
+                        throw HabitsLoadFailedException(load)
+                    }
+                    val proposed = mutate(load.db)
+                    lastProposed = proposed
+                    if (proposed == null) return@withLock VerifiedWrite(true, load.db, null)
+                    val ok = saveDatabase(uri, context, proposed)
+                    if (!ok) {
+                        Log.w(TAG, "$label: write did not land (attempt $attempt)")
+                        return@withLock VerifiedWrite(false, load.db, null,
+                            IOException("saveDatabase reported failure (SAF write or anti-shrinkage guard)"))
+                    }
+                    val fresh = loadDatabaseFresh(uri, context)
+                    if (fresh !is HabitsLoadResult.Success) {
+                        Log.w(TAG, "$label: post-write read failed (attempt $attempt): $fresh")
+                        return@withLock VerifiedWrite(false, load.db, null, HabitsLoadFailedException(fresh))
+                    }
+                    if (!verify(fresh.db, proposed)) {
+                        Log.w(TAG, "$label: post-write verify FAILED (attempt $attempt)")
+                        return@withLock VerifiedWrite(false, fresh.db, null,
+                            IOException("post-write verification failed"))
+                    }
+                    VerifiedWrite(true, fresh.db, proposed)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // Throwable: an OutOfMemoryError mid-write must be retried /
+                // reported, never take the process down mid-increment.
+                Log.w(TAG, "$label: attempt $attempt failed: ${e.message}")
+                null
+            }
+            if (res != null) {
+                lastDisk = res.onDisk
+                lastError = res.error
+                if (res.wrote) return@withContext res
+            }
+            if (attempt < VERIFIED_WRITE_ATTEMPTS) delay(VERIFIED_WRITE_BACKOFF_MS shl (attempt - 1))
+        }
+        VerifiedWrite(false, lastDisk, lastProposed, lastError ?: IOException("write did not land"))
+    }
+
+    /**
+     * Reads the habits file from disk WITHOUT the parsed-DB cache. The cache is
+     * keyed on (size, mtime) and our own save publishes the just-written graph
+     * under the new identity — so a cached read "confirms" whatever we wrote,
+     * whether or not it reached the disk. The verification read in
+     * [mutateHabitFileVerified] must bypass it.
+     */
+    suspend fun loadDatabaseFresh(uri: Uri, context: Context): HabitsLoadResult =
+        withContext(Dispatchers.IO) {
+            cachedDb = null
+            loadDatabaseResult(uri, context)
+        }
+
+    /**
+     * Increments the count for a habit on [date] by [amount], then saves.
+     * Verified read-modify-write (reads from disk first, confirms the result
+     * with a second fresh read); THROWS when the increment could not be
+     * landed — callers must not record timestamps or emit events for an
+     * increment that threw. The increment is journaled first so a failure is
+     * healed by the next successful write (see [IncrementJournal]).
+     *
+     * [stamps] / [stampsHandledByCaller]: see [PendingIncrement]. Pass the
+     * event's stamps here when the caller cannot record them itself after a
+     * verified write (e.g. the bubble widget's automatic increments).
      */
     suspend fun incrementHabitForDate(
         uri: Uri,
         context: Context,
         habitName: String,
         amount: Int,
-        date: LocalDate
+        date: LocalDate,
+        stamps: List<String> = emptyList(),
+        stampsHandledByCaller: Boolean = false
     ): HabitsDatabase = withContext(Dispatchers.IO) {
-        fileMutex.withLock {
-        val loadResult = loadDatabaseResult(uri, context)
-        if (loadResult !is HabitsLoadResult.Success) {
-            Log.w(TAG, "incrementHabitForDate: load did not succeed ($loadResult), refusing to save and throwing")
-            throw HabitsLoadFailedException(loadResult)
-        }
-        val db = loadResult.db.toMutableMap()
-        val dateStr = dateString(date)
-
-        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
-        val current = habitEntries[dateStr] ?: 0
-        habitEntries[dateStr] = current + amount
-
-        db[habitName] = habitEntries.toSortedMap()
-
-        saveDatabase(uri, context, db)
-        db
-        }
+        incrementHabitSlotsForDate(
+            uri, context, mapOf(habitName to amount), date, stamps, stampsHandledByCaller
+        ).let { full -> full[habitName]?.let { mapOf(habitName to it) } ?: emptyMap() }
     }
 
     /**
+     * Like [incrementHabitForDate] but returns the WHOLE written database,
+     * for callers that read other slots' new totals afterwards.
+     */
+    suspend fun incrementHabitForDateFull(
+        uri: Uri,
+        context: Context,
+        habitName: String,
+        amount: Int,
+        date: LocalDate
+    ): HabitsDatabase =
+        incrementHabitSlotsForDate(uri, context, mapOf(habitName to amount), date)
+
+    /**
      * Increments today's count for a habit by [amount], then saves.
+     * Verified; throws when the increment did not land (see
+     * [incrementHabitForDate]).
      */
     suspend fun incrementHabit(
         uri: Uri,
         context: Context,
         habitName: String,
-        amount: Int
-    ): HabitsDatabase = incrementHabitForDate(uri, context, habitName, amount, LocalDate.now())
+        amount: Int,
+        stamps: List<String> = emptyList(),
+        stampsHandledByCaller: Boolean = false
+    ): HabitsDatabase = incrementHabitForDate(
+        uri, context, habitName, amount, LocalDate.now(), stamps, stampsHandledByCaller
+    )
 
     /**
      * Atomically increments BOTH value slots of a timer-tracked habit for
      * today in a single read-modify-write: +[sessions] in the habit's own
      * slot and +[minutes] in its first-class minutes slot
-     * (`minutes:<habitName>`).
+     * (`minutes:<habitName>`). Verified; throws when it did not land.
      *
-     * One atomic write instead of two back-to-back [incrementHabit] calls
-     * matters: a concurrent reader/writer (e.g. the app's startup
-     * ensure-days fill) can otherwise interleave BETWEEN the two writes,
-     * load the half-updated state, and later persist it — silently losing
-     * the session increment while keeping the minutes.
-     *
-     * Returns the saved database (useful for reading back the new day totals).
+     * Returns the whole written database (useful for reading back the new
+     * day totals).
      */
     suspend fun incrementHabitWithMinutes(
         uri: Uri,
         context: Context,
         habitName: String,
         minutes: Int,
-        sessions: Int
+        sessions: Int,
+        stamps: List<String> = emptyList(),
+        stampsHandledByCaller: Boolean = false
     ): HabitsDatabase = withContext(Dispatchers.IO) {
-        fileMutex.withLock {
-        val loadResult = loadDatabaseResult(uri, context)
-        if (loadResult !is HabitsLoadResult.Success) {
-            Log.w(TAG, "incrementHabitWithMinutes: load did not succeed ($loadResult), refusing to save and throwing")
-            throw HabitsLoadFailedException(loadResult)
-        }
-        val db = loadResult.db.toMutableMap()
-        val dateStr = dateString(LocalDate.now())
-
-        val habitEntries = db[habitName]?.toMutableMap() ?: mutableMapOf()
-        habitEntries[dateStr] = (habitEntries[dateStr] ?: 0) + sessions
-        db[habitName] = habitEntries.toSortedMap()
-
-        val minKey = minutesKey(habitName)
-        val minEntries = db[minKey]?.toMutableMap() ?: mutableMapOf()
-        minEntries[dateStr] = (minEntries[dateStr] ?: 0) + minutes
-        db[minKey] = minEntries.toSortedMap()
-
-        saveDatabase(uri, context, db)
-        db
-        }
+        val increments = linkedMapOf<String, Int>()
+        if (sessions > 0) increments[habitName] = sessions
+        if (minutes > 0) increments[minutesKey(habitName)] = minutes
+        incrementHabitSlotsForDate(
+            uri, context, increments, LocalDate.now(), stamps, stampsHandledByCaller
+        )
     }
 
     /**
@@ -792,7 +939,9 @@ class HabitsRepository {
      * be subtracted without un-counting the session).
      *
      * The resulting day total is clamped at zero — an over-correction can
-     * never produce negative minutes. No-op for a zero delta.
+     * never produce negative minutes. No-op for a zero delta. Verified;
+     * throws when the adjustment did not land. Not journaled: a replayed
+     * negative adjustment could not be told apart from one that already ran.
      */
     suspend fun adjustHabitMinutesSlot(
         uri: Uri,
@@ -801,31 +950,26 @@ class HabitsRepository {
         deltaMinutes: Int
     ): HabitsDatabase = withContext(Dispatchers.IO) {
         if (deltaMinutes == 0) return@withContext loadDatabase(uri, context)
-        fileMutex.withLock {
-        val loadResult = loadDatabaseResult(uri, context)
-        if (loadResult !is HabitsLoadResult.Success) {
-            Log.w(TAG, "adjustHabitMinutesSlot: load did not succeed ($loadResult), refusing to save and throwing")
-            throw HabitsLoadFailedException(loadResult)
-        }
-        val db = loadResult.db.toMutableMap()
-        val dateStr = dateString(LocalDate.now())
-        val minKey = minutesKey(habitName)
-        val minEntries = db[minKey]?.toMutableMap() ?: mutableMapOf()
-        val current = minEntries[dateStr] ?: 0
-        val updated = (current + deltaMinutes).coerceAtLeast(0)
-        if (updated != current) {
+        val outcome = mutateHabitFileVerified(uri, context, label = "adjustHabitMinutesSlot") { disk ->
+            val db = disk.toMutableMap()
+            val dateStr = dateString(LocalDate.now())
+            val minKey = minutesKey(habitName)
+            val minEntries = db[minKey]?.toMutableMap() ?: mutableMapOf()
+            val current = minEntries[dateStr] ?: 0
+            val updated = (current + deltaMinutes).coerceAtLeast(0)
+            if (updated == current) return@mutateHabitFileVerified null
             if (updated == 0) minEntries.remove(dateStr) else minEntries[dateStr] = updated
             if (minEntries.isEmpty()) db.remove(minKey) else db[minKey] = minEntries.toSortedMap()
-            saveDatabase(uri, context, db)
+            db
         }
-        db
-        }
+        if (!outcome.wrote) throw outcome.error ?: IOException("minutes adjustment did not land")
+        outcome.onDisk
     }
 
     /**
      * Atomically increments MULTIPLE storage keys for today in a single
      * read-modify-write cycle: +[amount] for each entry of [increments]
-     * (storage key → amount). Keys with an amount ≤ 0 are skipped.
+     * (storage key → amount). Verified; throws when it did not land.
      *
      * Used by the JugCoach integration receiver, which feeds the habit's own
      * count plus its six secondary-value slots (juggling time / catches totals
@@ -843,38 +987,90 @@ class HabitsRepository {
     ): HabitsDatabase = incrementHabitSlotsForDate(uri, context, increments, LocalDate.now())
 
     /**
-     * Date-aware variant of [incrementHabitSlots]: applies all increments to
-     * [date] instead of today. Used by the PC-widget event queue processor,
-     * which may apply events that were queued on the PC while the phone was
-     * offline (possibly on a previous day).
+     * Re-applies the journal's pending increments of ANY writer that have not
+     * reached the file yet (see [IncrementJournal.replay]). Runs at most one
+     * read-modify-write; a failure leaves the entries in the journal for the
+     * next pass. Returns the storage keys that were healed by THIS call, so
+     * the caller can emit UI refresh events for them.
+     *
+     * @param onReplayedStamp receives each healed entry that still carries
+     *        stamps to record ([PendingIncrement.stampsHandledByCaller] =
+     *        false) — after its verified write.
+     */
+    suspend fun replayPendingIncrements(
+        uri: Uri,
+        context: Context,
+        onReplayedStamp: suspend (PendingIncrement) -> Unit = {}
+    ): Set<String> {
+        val pending = try {
+            IncrementJournal.snapshot(context)
+        } catch (e: Exception) {
+            Log.w(TAG, "replayPendingIncrements: journal unreadable: ${e.message}")
+            return emptySet()
+        }
+        if (pending.isEmpty()) return emptySet()
+        val result = IncrementJournal.replay(context, this, uri, onReplayedStamp)
+        return if (result.appliedCount > 0) result.appliedKeys else emptySet()
+    }
+
+    /**
+     * Date-aware, verified, journaled multi-key increment — the implementation
+     * behind every increment in this class.
+     *
+     * WRITE-AHEAD: each key/amount pair is journaled BEFORE the file is
+     * touched and forgotten only after the written state was confirmed by a
+     * fresh disk read. On failure the entries stay journaled and are healed by
+     * the next successful write of any habit or by [replayPendingIncrements].
+     *
+     * Idempotent per slot: an amount is only added when the slot has not yet
+     * reached the value this increment builds toward (a previous attempt may
+     * have landed without its confirmation being seen).
      */
     suspend fun incrementHabitSlotsForDate(
         uri: Uri,
         context: Context,
         increments: Map<String, Int>,
-        date: LocalDate
+        date: LocalDate,
+        stamps: List<String> = emptyList(),
+        stampsHandledByCaller: Boolean = false
     ): HabitsDatabase = withContext(Dispatchers.IO) {
-        fileMutex.withLock {
-        val positive = increments.filterValues { it > 0 }
-        if (positive.isEmpty()) return@withContext loadDatabase(uri, context)
+        val deltas = increments.filterValues { it != 0 }
+        if (deltas.isEmpty()) return@withContext loadDatabase(uri, context)
 
-        val loadResult = loadDatabaseResult(uri, context)
-        if (loadResult !is HabitsLoadResult.Success) {
-            Log.w(TAG, "incrementHabitSlots: load did not succeed ($loadResult), refusing to save and throwing")
-            throw HabitsLoadFailedException(loadResult)
-        }
-        val db = loadResult.db.toMutableMap()
         val dateStr = dateString(date)
-
-        for ((key, amount) in positive) {
-            val entries = db[key]?.toMutableMap() ?: mutableMapOf()
-            entries[dateStr] = (entries[dateStr] ?: 0) + amount
-            db[key] = entries.toSortedMap()
+        val now = System.currentTimeMillis()
+        val pending = deltas.map { (key, amount) ->
+            PendingIncrement(
+                key = key, amount = amount, date = dateStr, eventAt = now,
+                stamps = stamps, stampsHandledByCaller = stampsHandledByCaller
+            )
         }
+        IncrementJournal.addAll(context, pending)
 
-        saveDatabase(uri, context, db)
-        db
+        val outcome = mutateHabitFileVerified(uri, context, label = "increment(${deltas.keys})") { disk ->
+            val db = disk.toMutableMap()
+            var touched = false
+            for ((key, amount) in deltas) {
+                val entries = db[key]?.toMutableMap() ?: mutableMapOf()
+                val before = entries[dateStr] ?: 0
+                val after = if (amount >= 0) maxOf(before, before + amount) else before + amount
+                if (after != before) {
+                    entries[dateStr] = after
+                    db[key] = entries.toSortedMap()
+                    touched = true
+                }
+            }
+            if (!touched) null else db
         }
+        if (!outcome.wrote) {
+            // The journal keeps the increment; the next successful write
+            // replays it. Surface the failure so NO timestamp is recorded for
+            // a point that is not (yet) on disk.
+            throw outcome.error ?: IOException("increment did not land")
+        }
+        // Verified on disk: the journal entries have served their purpose.
+        IncrementJournal.remove(context, pending)
+        outcome.onDisk
     }
 
     /**

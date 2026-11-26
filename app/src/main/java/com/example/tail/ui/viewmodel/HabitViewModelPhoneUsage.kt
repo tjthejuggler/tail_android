@@ -169,9 +169,7 @@ internal suspend fun HabitViewModel.syncPhoneUsageHabits(
     if (dbChanged) {
         cachedPhoneDb = mutableDb
         rebuildHabitList()
-        withContext(Dispatchers.IO) {
-            habitsRepo.persistDatabase(android.net.Uri.parse(s.fileUri), context, mutableDb)
-        }
+        persistSnapshotRebased(android.net.Uri.parse(s.fileUri), mutableDb, label = "vm-snapshot")
         Log.d(TAG, "PhoneUsage sync: wrote ${snapshotsByDate.size} day(s) × ${links.size} habit(s)")
     }
 

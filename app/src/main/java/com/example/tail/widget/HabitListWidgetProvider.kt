@@ -393,18 +393,29 @@ class HabitListWidgetProvider : AppWidgetProvider() {
                     val habitsRepo = HabitsRepository()
                     val uri = Uri.parse(fileUri)
 
+                    // Verified write: incrementHabit THROWS when the point did
+                    // not reach the file — the timestamp (a separate store) is
+                    // then never recorded for a count that is not on disk.
+                    // The stamp rides along in the write-ahead journal so a
+                    // replay of a failed write still records it.
                     var didIncrement = false
                     if (isMaxOne) {
                         val db = habitsRepo.loadDatabase(uri, appCtx)
                         val todayStr = java.time.LocalDate.now().toString()
                         val cur = db[habitName]?.get(todayStr) ?: 0
                         if (cur < 1) {
-                            habitsRepo.incrementHabit(uri, appCtx, habitName, 1)
+                            habitsRepo.incrementHabit(
+                                uri, appCtx, habitName, 1,
+                                stamps = listOf(HabitTimestampRepository.nowTime())
+                            )
                             HabitIncrementBus.emit(habitName)
                             didIncrement = true
                         }
                     } else {
-                        habitsRepo.incrementHabit(uri, appCtx, habitName, 1)
+                        habitsRepo.incrementHabit(
+                            uri, appCtx, habitName, 1,
+                            stamps = listOf(HabitTimestampRepository.nowTime())
+                        )
                         HabitIncrementBus.emit(habitName)
                         didIncrement = true
                     }

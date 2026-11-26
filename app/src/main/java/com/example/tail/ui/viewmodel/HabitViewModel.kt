@@ -912,7 +912,50 @@ class HabitViewModel(
     internal var isSavingScreenIndex: Boolean = false
 
     // Cache the full unified DB so we can rebuild the habit list without re-reading the file
-    internal var cachedPhoneDb: HabitsDatabase = emptyMap()
+    //
+    // The setter remembers, per published snapshot, the snapshot it was
+    // derived FROM (the value being replaced). Background syncs copy the
+    // cache, mutate the copy, publish it and persist the WHOLE file — that
+    // persist must be rebased against what the cache was when the copy was
+    // taken, or an increment (widget tap / bubble / IPC) that landed on disk
+    // meanwhile is overwritten (see persistSnapshotRebased / RebaseSnapshot).
+    @Volatile
+    internal var snapshotBases: java.util.IdentityHashMap<HabitsDatabase, HabitsDatabase> =
+        java.util.IdentityHashMap()
+        private set
+
+    private var _cachedPhoneDb: HabitsDatabase = emptyMap()
+    internal var cachedPhoneDb: HabitsDatabase
+        get() = _cachedPhoneDb
+        set(value) {
+            if (value !== _cachedPhoneDb) {
+                try { snapshotBases[value] = _cachedPhoneDb } catch (_: Exception) {}
+                // Keep the map bounded: it only ever needs to answer for the
+                // most recently published snapshots.
+                if (snapshotBases.size > 64) snapshotBases.clear()
+            }
+            _cachedPhoneDb = value
+        }
+
+    /**
+     * Persists a WHOLE-FILE snapshot published by a ViewModel mutation with
+     * 3-way rebase semantics: whatever changed on disk since the snapshot's
+     * base was taken (increments from widgets, the bubble, IPC receivers) is
+     * kept for every slot this mutation did not itself touch.
+     *
+     * Drop-in for `habitsRepo.persistDatabase(uri, context, snapshot)` at the
+     * end of a `val mutableDb = cachedPhoneDb.toMutableMap(); … ;
+     * cachedPhoneDb = mutableDb` sequence. Returns true on a verified write.
+     */
+    internal suspend fun persistSnapshotRebased(
+        uri: android.net.Uri,
+        snapshot: HabitsDatabase,
+        label: String,
+        forceHabits: Set<String> = emptySet()
+    ): Boolean {
+        val base = snapshotBases[snapshot] ?: snapshot
+        return habitsRepo.persistDatabaseRebased(uri, context, base, snapshot, label, forceHabits)
+    }
 
     // Monotonic epoch bumped on EVERY cachedPhoneDb assignment made by the
     // optimistic increment paths. The HabitIncrementBus collector re-checks
@@ -1030,6 +1073,19 @@ class HabitViewModel(
                 Log.d(TAG, "HabitIncrementBus event for '$habitName' — reloading DB")
                 val phoneUriStr = _settings.value.fileUri
                 if (phoneUriStr.isNotEmpty()) {
+                    // Heal the write-ahead journal whenever ANY increment
+                    // lands from outside the ViewModel: a writer whose own
+                    // write failed (or could not be confirmed) left its units
+                    // in the journal, and this is a cheap moment to fold them
+                    // into one verified write before reloading the UI.
+                    try {
+                        habitsRepo.replayPendingIncrements(Uri.parse(phoneUriStr), context) { inc ->
+                            val date = com.example.tail.data.parseDate(inc.date) ?: return@replayPendingIncrements
+                            for (stamp in inc.stamps) timestampRepo.addTimestamp(inc.key, date, stamp)
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "journal replay on increment event failed: ${e.message}")
+                    }
                     try {
                         // Epoch-stable reload: if an optimistic increment's
                         // persist lands WHILE this reload is reading the file,
@@ -1211,9 +1267,7 @@ class HabitViewModel(
                                 mutableDb[sk] = sEntries
                                 cachedPhoneDb = mutableDb
                                 rebuildHabitList()
-                                withContext(Dispatchers.IO) {
-                                    habitsRepo.persistDatabase(Uri.parse(s.fileUri), context, mutableDb)
-                                }
+                                persistSnapshotRebased(Uri.parse(s.fileUri), mutableDb, label = "vm-snapshot")
                                 Log.d(TAG, "Meditation import complete: $minAdded min entries, $sesAdded session entries. Persisted to ${s.fileUri}")
                             }
                         }
@@ -2259,9 +2313,7 @@ class HabitViewModel(
 
         val fileUri = _settings.value.fileUri
         if (fileUri.isNotEmpty()) {
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(fileUri), context, mutableDb)
-            }
+            persistSnapshotRebased(Uri.parse(fileUri), mutableDb, label = "vm-snapshot")
         }
         Log.d(TAG, "Minutes slot synced for '$habitName': ${updates.size} set, ${stale.size} cleared")
     }
@@ -2882,10 +2934,8 @@ class HabitViewModel(
                 rebuildHabitList()
 
                 if (phoneUriStr.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
-                        habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
-                        settingsRepo.saveDatedEntryFileSizes(newSizes)
-                    }
+                    persistSnapshotRebased(Uri.parse(phoneUriStr), mutableDb, label = "vm-snapshot")
+                        withContext(Dispatchers.IO) { settingsRepo.saveDatedEntryFileSizes(newSizes) }
                 }
                 val affected = preview.addedDates.size + preview.removedDates.size +
                         preview.changedDates.size
@@ -3295,10 +3345,8 @@ class HabitViewModel(
             rebuildHabitList()
 
             // ── IO work: persist to disk + save size to DataStore ─────────────
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
-                settingsRepo.saveDatedEntryFileSizes(newSizes)
-            }
+            persistSnapshotRebased(Uri.parse(phoneUriStr), mutableDb, label = "vm-snapshot")
+                withContext(Dispatchers.IO) { settingsRepo.saveDatedEntryFileSizes(newSizes) }
 
             Log.d(TAG, "DatedEntry[$habitName]: synced ${parsedCounts.size} dates")
         } catch (e: Exception) {
@@ -3689,9 +3737,7 @@ class HabitViewModel(
         if (changed) {
             cachedPhoneDb = mutableDb
             rebuildHabitList()
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
-            }
+            persistSnapshotRebased(Uri.parse(phoneUriStr), mutableDb, label = "vm-snapshot")
             Log.d(TAG, "Chess.com linked habits reset to 0")
         }
     }
@@ -3913,9 +3959,7 @@ class HabitViewModel(
             rebuildHabitList()
 
             // Persist to disk
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
-            }
+            persistSnapshotRebased(Uri.parse(phoneUriStr), mutableDb, label = "vm-snapshot")
 
             // Record timestamps only for NEW activity — one per new game
             // played today, each at its actual end time (todayNewTimes
@@ -4152,9 +4196,7 @@ class HabitViewModel(
             mutableDb[habitName] = resetEntries
             cachedPhoneDb = mutableDb
             rebuildHabitList()
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
-            }
+            persistSnapshotRebased(Uri.parse(phoneUriStr), mutableDb, label = "vm-snapshot")
             Log.d(TAG, "GitHub habit '$habitName' reset to 0")
         }
     }
@@ -4268,9 +4310,7 @@ class HabitViewModel(
         if (dbChanged) {
             cachedPhoneDb = mutableDb
             rebuildHabitList()
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(phoneUriStr), context, mutableDb)
-            }
+            persistSnapshotRebased(Uri.parse(phoneUriStr), mutableDb, label = "vm-snapshot")
             // Timestamps for linked habits fed by today's GitHub deltas
             if (linkedTodayDeltas.isNotEmpty()) {
                 val now = HabitTimestampRepository.nowTime()

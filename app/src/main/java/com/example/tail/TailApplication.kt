@@ -44,6 +44,15 @@ class TailApplication : Application() {
         // icon's daily-points tier colour.
         com.example.tail.data.HabitIncrementBus.install(this)
 
+        // REPLAY the write-ahead increment journal at process start. Any
+        // increment whose habits-file write did not land (or could not be
+        // confirmed) in a previous session — widget taps, bubble sessions,
+        // IPC broadcasts, in-app taps — is re-applied here in one verified
+        // read-modify-write, with its original timestamps recorded. This is
+        // the safety net behind every increment path: nothing that was
+        // journaled is ever lost, even across a process death mid-write.
+        com.example.tail.data.IncrementReplay.scheduleStartup(this)
+
         // Install the UI-side hooks the data layer invokes via AppHooks —
         // widget refresh and points-driven wallpaper updates — so the data
         // module stays free of widget/wallpaper compile-time dependencies.

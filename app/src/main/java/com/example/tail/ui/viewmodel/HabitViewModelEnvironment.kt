@@ -284,9 +284,7 @@ internal suspend fun HabitViewModel.syncEnvironmentHabits(
     if (dbChanged) {
         cachedPhoneDb = mutableDb
         rebuildHabitList()
-        withContext(Dispatchers.IO) {
-            habitsRepo.persistDatabase(Uri.parse(s.fileUri), context, mutableDb)
-        }
+        persistSnapshotRebased(Uri.parse(s.fileUri), mutableDb, label = "vm-snapshot")
         Log.d(TAG, "Environment sync: wrote ${snapshotsByDate.size} day(s) × ${links.size} habit(s)")
     }
 
@@ -351,9 +349,7 @@ internal suspend fun HabitViewModel.canonicalizeEnvironmentHabitNames() {
     if (changed) {
         cachedPhoneDb = db
         rebuildHabitList()
-        withContext(Dispatchers.IO) {
-            habitsRepo.persistDatabase(Uri.parse(s.fileUri), context, db)
-        }
+        persistSnapshotRebased(Uri.parse(s.fileUri), db, label = "vm-snapshot")
     }
 }
 

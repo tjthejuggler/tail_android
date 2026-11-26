@@ -635,7 +635,21 @@ class SmartVoiceService : Service() {
                         habitsRepo.loadDatabase(uri, applicationContext)[habitName]?.get(todayStr) ?: 0
                     } else -1
 
-                    habitsRepo.incrementHabit(uri, applicationContext, habitName, incrementAmount)
+                    // Verified + journaled: throws when the point did not land,
+                    // so the timestamps below are never written for a count
+                    // that is not on disk. Stamps ride along for replay. A
+                    // failed habit is reported and skipped so the remaining
+                    // triggered habits are still processed.
+                    try {
+                        habitsRepo.incrementHabit(
+                            uri, applicationContext, habitName, incrementAmount,
+                            stamps = List(incrementAmount.coerceAtLeast(0)) { HabitTimestampRepository.nowTime() }
+                        )
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Voice increment for '$habitName' did not land (journaled, will retry): ${e.message}")
+                        ttsParts.add("${habitToTrigger[habitName] ?: habitName} NOT saved")
+                        continue
+                    }
                     HabitIncrementBus.emit(habitName)
                     Log.i(TAG, "Incremented habit '$habitName' by $incrementAmount via smart voice")
 
@@ -700,7 +714,10 @@ class SmartVoiceService : Service() {
                                     continue
                                 }
                             }
-                            habitsRepo.incrementHabitForDate(uri, applicationContext, targetKey, feedAmount, java.time.LocalDate.now())
+                            habitsRepo.incrementHabitForDate(
+                                uri, applicationContext, targetKey, feedAmount, java.time.LocalDate.now(),
+                                stamps = if (targetKey == linkedName) listOf(HabitTimestampRepository.nowTime()) else emptyList()
+                            )
                             HabitIncrementBus.emit(linkedName)
                             Log.i(TAG, "Incremented linked '$linkedName' (conditional on '$habitName', feeds $valueKey +$feedAmount)")
 

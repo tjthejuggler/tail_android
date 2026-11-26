@@ -124,11 +124,15 @@ class WidgetInputActivity : ComponentActivity() {
                 val phoneUriStr = settings.fileUri
                 if (phoneUriStr.isNotEmpty()) {
                     val incrementAmount = entries.size.coerceAtLeast(1)
+                    // Verified + journaled: throws when the point did not
+                    // land, so the timestamp below is never recorded for a
+                    // count that is not on disk.
                     habitsRepo.incrementHabit(
                         Uri.parse(phoneUriStr),
                         applicationContext,
                         habitName,
-                        incrementAmount
+                        incrementAmount,
+                        stamps = List(incrementAmount) { entryTime.toString() }
                     )
                     HabitIncrementBus.emit(habitName)
                     com.example.tail.ipc.HabitIncrementAnnouncer.announce(applicationContext, habitName, incrementAmount)

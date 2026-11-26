@@ -1487,9 +1487,7 @@ fun HabitViewModel.migrateValue1ToMinutesPrimary(habitName: String) {
             // survive — deleting it blanks the graph for EVERY metric.
             mutableDb[minKey] = value1Data
             cachedPhoneDb = mutableDb
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(Uri.parse(uriStr), context, mutableDb)
-            }
+            persistSnapshotRebased(Uri.parse(uriStr), mutableDb, label = "vm-snapshot")
             HabitsDataChangedBus.emit()
             copiedToMinutes = true
             Log.i(
@@ -1719,9 +1717,7 @@ fun HabitViewModel.deleteHabitData(habitName: String) {
         }
         cachedPhoneDb = mutableDb
         rebuildHabitList()
-        withContext(Dispatchers.IO) {
-            habitsRepo.persistDatabase(Uri.parse(uriStr), context, mutableDb)
-        }
+        persistSnapshotRebased(Uri.parse(uriStr), mutableDb, label = "vm-snapshot")
         HabitsDataChangedBus.emit()
         Log.i(TAG, "deleteHabitData: purged data of '$habitName' from JSON")
     }

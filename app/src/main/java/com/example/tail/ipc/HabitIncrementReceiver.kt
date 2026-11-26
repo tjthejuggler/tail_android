@@ -145,10 +145,20 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                 if (intent.hasExtra(EXTRA_SESSIONS)) {
                     val sessions = intent.getIntExtra(EXTRA_SESSIONS, 1).coerceAtLeast(0)
                     val minutes = intent.getIntExtra(EXTRA_MINUTES, 0)
+                    // Verified + journaled writes: a failure THROWS out of the
+                    // try below, so no timestamp/announcement is ever produced
+                    // for a count that is not on disk. Stamps ride along in the
+                    // write-ahead journal so a replay still records them.
                     when {
                         sessions == 0 -> habitsRepo.adjustHabitMinutesSlot(uri, appContext, habitName, minutes)
-                        minutes > 0 -> habitsRepo.incrementHabitWithMinutes(uri, appContext, habitName, minutes, sessions)
-                        else -> habitsRepo.incrementHabit(uri, appContext, habitName, sessions)
+                        minutes > 0 -> habitsRepo.incrementHabitWithMinutes(
+                            uri, appContext, habitName, minutes, sessions,
+                            stamps = listOf(HabitTimestampRepository.nowTime())
+                        )
+                        else -> habitsRepo.incrementHabit(
+                            uri, appContext, habitName, sessions,
+                            stamps = List(sessions) { HabitTimestampRepository.nowTime() }
+                        )
                     }
                     HabitIncrementBus.emit(habitName)
                     Log.i(
@@ -210,7 +220,19 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                         ?.get(java.time.LocalDate.now().toString()) ?: 0
                 } else -1
 
-                habitsRepo.incrementHabit(uri, appContext, habitName, amount)
+                // Verified + journaled: throws when the point did not land —
+                // the timestamp block below is then skipped (no stamp without
+                // a point). Stamps travel in the journal for replay.
+                val eventStamp = if (intent.hasExtra(EXTRA_TIMESTAMP)) {
+                    try {
+                        java.time.Instant.ofEpochMilli(intent.getLongExtra(EXTRA_TIMESTAMP, 0L))
+                            .atZone(java.time.ZoneId.systemDefault()).toLocalTime()
+                            .format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss"))
+                    } catch (_: Exception) { HabitTimestampRepository.nowTime() }
+                } else HabitTimestampRepository.nowTime()
+                habitsRepo.incrementHabit(
+                    uri, appContext, habitName, amount, stamps = List(amount.coerceAtLeast(0)) { eventStamp }
+                )
                 HabitIncrementBus.emit(habitName)
                 Log.i(TAG, "Incremented habit '$habitName' by $amount via IPC broadcast")
 
@@ -281,7 +303,10 @@ class HabitIncrementReceiver : BroadcastReceiver() {
                                 continue
                             }
                         }
-                        habitsRepo.incrementHabitForDate(uri, appContext, targetKey, feedAmount, java.time.LocalDate.now())
+                        habitsRepo.incrementHabitForDate(
+                            uri, appContext, targetKey, feedAmount, java.time.LocalDate.now(),
+                            stamps = if (targetKey == linkedName) listOf(HabitTimestampRepository.nowTime()) else emptyList()
+                        )
                         HabitIncrementBus.emit(linkedName)
                         Log.i(TAG, "Incremented linked habit '$linkedName' (conditional on '$habitName', feeds $valueKey +$feedAmount)")
 

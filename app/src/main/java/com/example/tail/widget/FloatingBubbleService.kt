@@ -3407,8 +3407,13 @@ class FloatingBubbleService : Service() {
                         ?.get(LocalDate.now().toString()) ?: 0
                 }
 
+                // VERIFIED + JOURNALED write: throws when the session did not
+                // reach the file (no stamp is then recorded below). The stamp
+                // for the session rides along in the write-ahead journal, so a
+                // replay of a failed write still records it at this time.
                 val db = habitsRepo.incrementHabitWithMinutes(
-                    Uri.parse(uriStr), applicationContext, habit, minutes, sessions
+                    Uri.parse(uriStr), applicationContext, habit, minutes, sessions,
+                    stamps = if (sessions > 0) listOf(HabitTimestampRepository.nowTime()) else emptyList()
                 )
 
                 // Also increment any conditional linked habits — mirrors
@@ -3454,12 +3459,15 @@ class FloatingBubbleService : Service() {
                             }
                         }
                         habitsRepo.incrementHabitForDate(
-                            Uri.parse(uriStr), applicationContext, targetKey, feedAmount, LocalDate.now()
+                            Uri.parse(uriStr), applicationContext, targetKey, feedAmount, LocalDate.now(),
+                            stamps = if (targetKey == linkedName) listOf(HabitTimestampRepository.nowTime()) else emptyList()
                         )
                         HabitIncrementBus.emit(linkedName)
                         Log.i("FloatingBubbleService", "Incremented linked habit '$linkedName' (conditional on '$habit', feeds $valueKey +$feedAmount)")
 
-                        // Record timestamp for the linked habit too
+                        // Record timestamp for the linked habit too — only
+                        // reached when the verified increment above did not
+                        // throw.
                         try {
                             HabitTimestampRepository(applicationContext).addTimestamp(linkedName)
                         } catch (e: Exception) {
@@ -3473,6 +3481,9 @@ class FloatingBubbleService : Service() {
                 // HabitIncrementReceiver): one "HH:mm:ss" stamp at the stop
                 // time, with the session's minutes parked AT that stamp so the
                 // timestamp editor and the daily schedule view can show them.
+                // Reached only when incrementHabitWithMinutes above did NOT
+                // throw, i.e. the point is VERIFIED on disk — never a stamp
+                // without a point.
                 try {
                     val tsRepo = HabitTimestampRepository(applicationContext)
                     val today = LocalDate.now()

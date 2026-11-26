@@ -323,9 +323,7 @@ internal suspend fun HabitViewModel.resetGarminHabitData(settings: AppSettings) 
         rebuildHabitList()
 
         // Persist to disk
-        withContext(Dispatchers.IO) {
-            habitsRepo.persistDatabase(Uri.parse(settings.fileUri), context, mutableDb)
-        }
+        persistSnapshotRebased(Uri.parse(settings.fileUri), mutableDb, label = "vm-snapshot")
     }
 }
 
@@ -571,11 +569,7 @@ internal suspend fun HabitViewModel.autoLinkMissingGarminHabits(
         }
         if (dbChanged) {
             cachedPhoneDb = mutableDb
-            withContext(Dispatchers.IO) {
-                habitsRepo.persistDatabase(
-                    Uri.parse(updatedSettings.fileUri), context, mutableDb
-                )
-            }
+            persistSnapshotRebased(Uri.parse(updatedSettings.fileUri), mutableDb, label = "vm-snapshot")
         }
     }
 
@@ -794,9 +788,7 @@ internal suspend fun HabitViewModel.applyGarminData(
         rebuildHabitList()
 
         // Persist to disk
-        withContext(Dispatchers.IO) {
-            habitsRepo.persistDatabase(Uri.parse(settings.fileUri), context, mutableDb)
-        }
+        persistSnapshotRebased(Uri.parse(settings.fileUri), mutableDb, label = "vm-snapshot")
 
         // Record timestamps only for the NEW increments (delta), not the
         // total count. For activity-based types (run/bike/swim) prefer

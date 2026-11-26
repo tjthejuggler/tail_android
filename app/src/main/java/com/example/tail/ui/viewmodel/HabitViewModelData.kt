@@ -1208,36 +1208,111 @@ fun HabitViewModel.incrementHabit(
         // stolen by a concurrent stale disk reload) while never reverting
         // any newer sibling state. This coroutine runs on Main, like every
         // writer of cachedPhoneDb, so reading it here is race-free.
+        // ── WRITE-AHEAD JOURNAL ────────────────────────────────────────────
+        // Every unit this tap adds is durable BEFORE the file is touched and
+        // forgotten only after a FRESH disk read confirms it. A write that
+        // does not land (SAF failure, anti-shrinkage guard, process death,
+        // Syncthing conflict copy) is healed by the next successful write of
+        // any habit — see IncrementJournal. Stamps ride along so a replay
+        // still records the timestamp this tap would have recorded.
+        val nowStamp = stampTime
+            ?: if (habitName in _settings.value.timelessHabits)
+                com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
+            else com.example.tail.data.HabitTimestampRepository.nowTime()
+        val journalEntries = ArrayList<com.example.tail.data.PendingIncrement>()
+        if (storedDelta != 0) {
+            journalEntries += com.example.tail.data.PendingIncrement(
+                key = habitName, amount = storedDelta, date = dateStr,
+                eventAt = System.currentTimeMillis(), target = newCount,
+                stamps = List(storedDelta.coerceAtLeast(0)) { nowStamp },
+                // This path records its own stamps after the verified write.
+                stampsHandledByCaller = true
+            )
+        }
+        if (rangePoints != null && dbDelta != 0) {
+            journalEntries += com.example.tail.data.PendingIncrement(
+                key = secondaryValueKey(habitName), amount = amount, date = dateStr,
+                eventAt = System.currentTimeMillis(),
+                stampsHandledByCaller = true
+            )
+        }
+        if (journalEntries.isNotEmpty()) {
+            try {
+                com.example.tail.data.IncrementJournal.addAll(context, journalEntries)
+            } catch (e: Exception) {
+                Log.e(TAG, "Could not journal increment for '$habitName' — aborting tap: ${e.message}")
+                _errorMessage.value = "Could not save increment for '$habitName' (journal write failed)"
+                cachedPhoneDb = habitsRepo.applyIncrementToDb(cachedPhoneDb, habitName, -dbDelta, targetDate)
+                dbEpoch++
+                rebuildHabitList()
+                return@launch
+            }
+        }
+
         var persisted = false
         var lastPersistError: Throwable? = null
+        var lastOutcomeOnDisk: HabitsDatabase? = null
+        // Older writers' leftovers, folded into the SAME write below (one
+        // snapshot for all attempts; the mutate lambda re-checks each entry
+        // against the fresh disk state every time).
+        val olderPending = try {
+            com.example.tail.data.IncrementJournal.snapshot(context)
+        } catch (_: Exception) { emptyList() }
         for (attempt in 1..INCREMENT_PERSIST_ATTEMPTS) {
+            // Retry merges the tap snapshot into the CURRENT cache (pointwise
+            // max) instead of re-persisting the frozen tap-time state — see
+            // mergeIncrementSnapshots (the rapid-tap "only the first tap
+            // survives" fix).
             val dbToWrite = if (attempt == 1) updatedDb
                 else mergeIncrementSnapshots(updatedDb, cachedPhoneDb)
             try {
-                // Each attempt holds the process-wide habits-file mutex for
-                // the whole write+verify, so a concurrent read-modify-write
-                // (ensureDaysExist zero-fill, an external increment) can
-                // never load our PRE-write state and save it back AFTER our
-                // write lands — the lost-tap-increment race.
-                var landed = false
-                habitsRepo.withFileLock {
-                    habitsRepo.persistDatabase(uri, context, dbToWrite)
-                    val reread = habitsRepo.loadDatabase(uri, context)
-                    val rereadVal = reread[habitName]?.get(dateStr)
-                    landed = if (trueValueOnly) {
-                        // Tier-unchanged custom-range input: the primary slot
-                        // already equals newCount on disk even when our write
-                        // never landed, so a >= check passes vacuously. Verify
-                        // the secondary true-value slot instead (the "amount
-                        // not saved into the true value" failure).
-                        reread[secondaryValueKey(habitName)]?.get(dateStr) == amount
-                    } else if (dbDelta >= 0) (rereadVal ?: 0) >= newCount
-                    else (rereadVal ?: Int.MAX_VALUE) <= newCount
+                // The write runs under the file mutex, starts from the FRESH
+                // on-disk state, and is verified by a SECOND fresh read —
+                // never the identity cache, which our own save republishes
+                // (that made the old verify confirm the in-memory state, not
+                // the disk). Our tap snapshot is rebased onto disk so a
+                // sibling tap or an external increment that landed meanwhile
+                // is kept for every slot this tap did not itself change.
+                val baseForRebase = snapshotBases[updatedDb] ?: cachedPhoneDb
+                val outcome = habitsRepo.mutateHabitFileVerified(
+                    uri, context, label = "tap($habitName)", verify = { fresh, _ ->
+                        if (trueValueOnly) {
+                            // Tier-unchanged custom-range input: the primary
+                            // slot already equals newCount on disk even when
+                            // our write never landed, so a >= check passes
+                            // vacuously. Verify the true-value slot instead.
+                            fresh[secondaryValueKey(habitName)]?.get(dateStr) == amount
+                        } else {
+                            val v = fresh[habitName]?.get(dateStr) ?: 0
+                            if (dbDelta >= 0) v >= newCount else v <= newCount
+                        }
+                    }
+                ) { disk ->
+                    val rebased = com.example.tail.data.rebaseSnapshot(
+                        baseForRebase, dbToWrite, disk
+                    ).toMutableMap()
+                    // Heal anything older writers left in the journal, in the
+                    // SAME write — a lost increment never waits for its own
+                    // retry path. Idempotent per slot.
+                    var touched = rebased !== disk
+                    for (inc in olderPending) {
+                        if (com.example.tail.data.IncrementJournal.satisfied(inc, rebased)) continue
+                        val entries = rebased[inc.key]?.toMutableMap() ?: mutableMapOf()
+                        val before = entries[inc.date] ?: 0
+                        val target = inc.target
+                        entries[inc.date] = if (inc.amount >= 0) maxOf(before, target ?: (before + inc.amount))
+                        else if (target != null) minOf(before, target) else before + inc.amount
+                        rebased[inc.key] = entries.toSortedMap()
+                        touched = true
+                    }
+                    if (!touched) null else rebased
                 }
-                if (landed) {
+                if (outcome.wrote) {
                     persisted = true
+                    lastOutcomeOnDisk = outcome.onDisk
                     break
                 }
+                lastPersistError = outcome.error
                 Log.e(TAG, "Increment verify failed (attempt $attempt) for '$habitName' — write did not land")
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
@@ -1255,28 +1330,41 @@ fun HabitViewModel.incrementHabit(
         if (!persisted) {
             _errorMessage.value =
                 "Failed to save increment for '$habitName'" +
-                    (lastPersistError?.message?.let { ": $it" } ?: " — write did not land")
-            // Resync the optimistic cache with the file so a later attempt
-            // doesn't early-return against a stale-high count.
+                    (lastPersistError?.message?.let { ": $it" } ?: " — write did not land") +
+                    " — it is journaled and will be retried automatically"
+            // The journal still holds this tap's units; they are replayed by
+            // the next successful write. Resync the optimistic cache with the
+            // file so the UI shows the truth until then.
             try {
                 cachedPhoneDb = habitsRepo.loadDatabase(uri, context)
                 dbEpoch++
+                rebuildHabitList()
             } catch (e2: Exception) {
                 Log.w(TAG, "Cache resync after failed persist failed too: ${e2.message}")
             }
             return@launch
         }
-        // Re-assert the just-persisted state: a concurrent disk reload
-        // (e.g. the HabitIncrementBus collector's ensureDaysExist) may
+        // Verified on a fresh disk read: this tap's journal entries have
+        // served their purpose. (Any older entries healed above were already
+        // satisfied — remove() only forgets entries whose effect is on disk.)
+        try {
+            com.example.tail.data.IncrementJournal.remove(context, journalEntries)
+            // Older entries folded into this same write (see the mutate
+            // lambda above): forget the ones now confirmed on disk.
+            if (olderPending.isNotEmpty()) {
+                val confirmedOnDisk = lastOutcomeOnDisk
+                if (confirmedOnDisk != null) {
+                    com.example.tail.data.IncrementJournal.remove(
+                        context,
+                        olderPending.filter { com.example.tail.data.IncrementJournal.satisfied(it, confirmedOnDisk) }
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+        // Re-assert the just-persisted state: a concurrent disk reload may
         // have replaced cachedPhoneDb with the PRE-persist file while the
-        // write was in flight. The rebuild below must never publish that
-        // stale snapshot over the optimistic UI update from Step 1.
-        // LOST-TAP FIX: the re-assert itself is now a MERGE, not an
-        // overwrite — re-asserting the frozen tap-time snapshot used to
-        // revert any sibling tap whose optimistic update was already in
-        // the cache (the rapid-tap "only the first square stays" bug).
-        // Pointwise-max preserves both: sibling taps' higher slots win,
-        // and our persisted slots still beat a stale disk reload.
+        // write was in flight — as a MERGE so a newer sibling tap in the
+        // cache survives (see mergeIncrementSnapshots).
         cachedPhoneDb = mergeIncrementSnapshots(updatedDb, cachedPhoneDb)
         dbEpoch++
         // Step 5 (moved BEFORE the bus emit / rebuild — the took-pills fix):
@@ -1292,15 +1380,10 @@ fun HabitViewModel.incrementHabit(
         // known time; a drifted stamp renders as a phantom text-less card.
         if (recordTimestamp && storedDelta > 0) {
             try {
-                // Timeless habits still get a per-unit entry in the timestamp
-                // store, but with the timeless sentinel instead of a clock
-                // time — so the increment is visible in the timestamps list
-                // with no time of day (tap the time to give it one later).
-                val stamp = stampTime
-                    ?: if (habitName in _settings.value.timelessHabits)
-                        com.example.tail.data.HabitTimestampRepository.TIMELESS_TIME
-                    else com.example.tail.data.HabitTimestampRepository.nowTime()
-                timestampRepo.addTimestamps(habitName, storedDelta, targetDate, stamp)
+                // nowStamp: the caller's stampTime, else the timeless
+                // sentinel for timeless habits, else the tap time — computed
+                // once above so the journal and the store agree.
+                timestampRepo.addTimestamps(habitName, storedDelta, targetDate, nowStamp)
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to record timestamps for '$habitName': ${e.message}")
             }

@@ -51,8 +51,11 @@ object ChessHabitCredit {
                     if ((db[habitName]?.get(today) ?: 0) >= 1) return@launch
                 }
 
+                // Verified + journaled: throws when the credit did not land —
+                // the timestamp below is then skipped.
                 habitsRepo.incrementHabitWithMinutes(
-                    uri, appContext, habitName, minutes.coerceAtLeast(0), sessions
+                    uri, appContext, habitName, minutes.coerceAtLeast(0), sessions,
+                    stamps = if (sessions > 0) listOf(HabitTimestampRepository.nowTime()) else emptyList()
                 )
                 HabitIncrementBus.emit(habitName)
                 try {
